@@ -17,10 +17,27 @@ import { registerServiceWorker } from "./pwa";
 
 const PROMPT = "joy \x1b[32m❯\x1b[0m "; // green chevron
 
-// Pin the running version to the bottom-right corner, present from the moment
-// the shell opens. It lives outside the terminal so it never scrolls with the
-// log, and reads from the same build-time VERSION the banner uses.
+// Pin the running version to the bottom-right corner,
+// present from the moment the shell opens.
+// It lives outside the terminal so it never scrolls with the log,
+// and reads from the same build-time VERSION the banner uses.
 document.getElementById("version")!.textContent = VERSION;
+
+// Mirror it on the bottom-left with a connectivity status —
+// a coloured dot and the word to match: green "online", red "offline".
+// It reflects navigator.onLine, repainted on the browser's online / offline events —
+// purely client-side, the same connectivity the outbox will later drain on.
+// Painted once now so it's correct from first frame.
+const connection = document.getElementById("connection")!;
+function paintConnection(): void {
+  const online = navigator.onLine;
+  connection.classList.toggle("online", online);
+  connection.classList.toggle("offline", !online);
+  connection.textContent = online ? "online" : "offline";
+}
+paintConnection();
+window.addEventListener("online", paintConnection);
+window.addEventListener("offline", paintConnection);
 
 const term = new Terminal({
   cursorBlink: true,
@@ -36,17 +53,17 @@ const term = new Terminal({
 const fit = new FitAddon();
 term.loadAddon(fit);
 term.open(document.getElementById("terminal")!);
-// Canvas renderer instead of xterm's default DOM renderer — far faster to
-// paint, and unlike WebGL it has no GPU-context-loss cliff on mobile. Must be
-// loaded after open().
+// Canvas renderer instead of xterm's default DOM renderer —
+// far faster to paint, and unlike WebGL it has no GPU-context-loss cliff on mobile.
+// Must be loaded after open().
 term.loadAddon(new CanvasAddon());
 fit.fit();
 window.addEventListener("resize", () => fit.fit());
 
 // --- launch ---------------------------------------------------------------
 
-// Pick the banner that fits the terminal we actually got (phones can't hold
-// the wide one-liner, so they get the stacked cut).
+// Pick the banner that fits the terminal we actually got
+// (phones can't hold the wide one-liner, so they get the stacked cut).
 const wide = term.cols >= WIDE_MIN_COLS;
 const banner = wide ? BANNER_WIDE : BANNER_NARROW;
 const tagline = wide ? TAGLINE_WIDE : TAGLINE_NARROW;
@@ -60,14 +77,15 @@ writeLine(term, "type \x1b[1m/help\x1b[0m to see what's here — \x1b[1mTab\x1b[
 writeLine(term);
 prompt();
 
-// Make the shell installable and offline-capable. Last, and off to the side —
-// it must never delay or break the terminal that just drew above.
+// Make the shell installable and offline-capable.
+// Last, and off to the side — it must never delay or break the terminal that just drew above.
 registerServiceWorker();
 
 // --- line editing ---------------------------------------------------------
 
-// xterm hands us raw keystrokes, not lines — so we keep our own buffer and
-// echo as we go. Minimal but enough to *feel* like a shell.
+// xterm hands us raw keystrokes, not lines —
+// so we keep our own buffer and echo as we go.
+// Minimal but enough to *feel* like a shell.
 let line = "";
 
 term.onData((data) => {
@@ -118,8 +136,8 @@ function handle(raw: string): void {
     return;
   }
 
-  // Bare keywords carry no slash (e.g. `reset`); check them before the
-  // slash-only gate below.
+  // Bare keywords carry no slash (e.g. `reset`);
+  // check them before the slash-only gate below.
   const bareCmd = findCommand(input);
   if (bareCmd?.bare) {
     bareCmd.run?.(term, []);
@@ -161,9 +179,9 @@ function ghostFor(input: string): string {
 }
 
 // Draw the inline suggestion (if any) in dim grey to the right of the cursor,
-// then park the cursor back at the typing position. Cheap by design: only the
-// tail of the line is ever touched — the prompt is never repainted — so typing
-// stays snappy.
+// then park the cursor back at the typing position.
+// Cheap by design: only the tail of the line is ever touched —
+// the prompt is never repainted — so typing stays snappy.
 function drawGhost(): void {
   const ghost = ghostFor(line);
   if (ghost) term.write(`\x1b[2m${ghost}\x1b[0m\x1b[${ghost.length}D`);

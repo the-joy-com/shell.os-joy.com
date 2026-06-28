@@ -39,3 +39,51 @@ body {
   pointer-events: none;
   user-select: none;
 }
+
+/* Connectivity status, pinned to the bottom-left corner over the terminal.
+   Mirrors the version tag on the opposite side: same fixed layer, same
+   read-only furniture treatment (clicks fall through). A coloured dot
+   (the ::before) plus its word — main.ts sets the label text and toggles the
+   .online / .offline class; the colours live here so the wiring stays a
+   single class swap. */
+#connection {
+  position: fixed;
+  left: 12px;
+  bottom: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "Cascadia Code", "Fira Code", Menlo, Consolas, monospace;
+  font-size: 12px;
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+}
+
+#connection::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  /* Until main.ts sets a state, show nothing rather than a wrong colour. */
+  background: transparent;
+}
+
+#connection.online {
+  color: #6ee7a8; /* green — matches the cursor */
+}
+
+#connection.online::before {
+  background: #6ee7a8;
+  box-shadow: 0 0 4px #6ee7a8;
+}
+
+#connection.offline {
+  color: #e76e6e; /* red */
+}
+
+#connection.offline::before {
+  background: #e76e6e;
+  box-shadow: 0 0 4px #e76e6e;
+}
