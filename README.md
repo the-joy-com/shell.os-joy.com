@@ -24,3 +24,27 @@ yarn serve        # build, then serve dist/ in one step (build + preview)
 ```
 
 The contents of `dist/` are what land on the server's document root.
+
+## deploy
+
+Deployment is done by hand from the server — no CI pipeline. The box keeps a clone of this repo, builds it locally (`dist/` is gitignored, so the artifact is never pulled, only rebuilt), and the built `dist/` is mirrored into nginx's document root at `/var/www/shell.os-joy.com/html`.
+
+One-time, on the server, with [Node.js](https://nodejs.org/) 18+ and Yarn installed:
+
+```bash
+mkdir -p ~/apps && cd ~/apps
+git clone git@github.com:the-joy-com/shell.os-joy.com.git
+cd shell.os-joy.com
+```
+
+Every deploy after that is a single command from the clone:
+
+```bash
+./deploy.sh
+```
+
+`deploy.sh` pulls the latest `main`, installs dependencies against `yarn.lock`, runs `yarn build`, then `rsync`s `dist/` into the document root (with `--delete`, so Vite's content-hashed bundles don't accumulate across deploys) and hands the files to `www-data`. It runs under `set -euo pipefail`, so a failed type-check or build aborts before the live site is touched.
+
+The script is committed with its executable bit set — git tracks that bit, so `./deploy.sh` works straight off a fresh clone. It does still `sudo chown` the document root itself: file ownership isn't something git can carry, so it's set on the server each deploy.
+
+No nginx reload is needed — only the files under an already-served root change.
