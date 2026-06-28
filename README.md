@@ -17,6 +17,22 @@ yarn dev          # start the dev server with hot reload
 
 `yarn dev` prints a local URL (usually <http://localhost:5173>) — open it and you'll get the terminal. Type `/help` to see the commands.
 
+## the connectivity dot
+
+The dot in the bottom-left corner is a live probe of the [kernel](../kernel.os-joy.com), not a `navigator.onLine` mirror: it polls the kernel's `GET /health` and flips **green only on a real `{ "msg": "ok" }` round trip**. A network that's up behind a dead kernel reads **offline** — the shell is nothing without the core behind it. (`navigator.onLine` is still used as a cheap pre-check: if the browser already knows it's offline, the fetch is skipped and the dot paints red at once.)
+
+Which kernel it probes is read from `import.meta.env.VITE_KERNEL_URL`, **defaulting to the production kernel** `https://kernel.os-joy.com` when unset — so a plain clone and every production build need zero config.
+
+To point dev at a kernel you're running locally, drop a **gitignored** `.env.local` next to `package.json`:
+
+```bash
+echo 'VITE_KERNEL_URL=http://127.0.0.1:9713' > .env.local
+```
+
+then restart `yarn dev` (Vite reads env vars at startup — a hot reload won't pick it up). `.env.local` is a per-machine override and intentionally uncommitted: committing `localhost` would make every clone and prod build probe your dev box. Open the shell at `localhost:5173` or `127.0.0.1:5173` — both are in the kernel's CORS allow-list; any other host or port the browser will block, and the dot will read offline even with the kernel up.
+
+> The browser can only *read* the kernel's cross-origin response if the kernel sends a matching CORS header. The kernel allows the shell's origins (`shell.os-joy.com` plus the two localhost dev origins); that allow-list ships with the kernel, so the green dot at `shell.os-joy.com` only lights up once a kernel carrying it has been deployed.
+
 ## build & preview the production bundle
 
 ```bash

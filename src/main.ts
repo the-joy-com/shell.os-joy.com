@@ -17,27 +17,63 @@ import { registerServiceWorker } from "./pwa";
 
 const PROMPT = "joy \x1b[32m❯\x1b[0m "; // green chevron
 
-// Pin the running version to the bottom-right corner,
-// present from the moment the shell opens.
-// It lives outside the terminal so it never scrolls with the log,
-// and reads from the same build-time VERSION the banner uses.
+// Pin the running version to the bottom-right corner, present from the moment the shell opens. It lives outside the terminal so it never scrolls with the log, and reads from the same build-time VERSION the banner uses.
 document.getElementById("version")!.textContent = VERSION;
 
-// Mirror it on the bottom-left with a connectivity status —
-// a coloured dot and the word to match: green "online", red "offline".
-// It reflects navigator.onLine, repainted on the browser's online / offline events —
-// purely client-side, the same connectivity the outbox will later drain on.
-// Painted once now so it's correct from first frame.
+// Mirror it on the bottom-left with a connectivity status — a coloured dot and the word to match: green "online", red "offline".
+//
+// "online" here means the *kernel answered*, not merely that the browser has a network: 
+// a live Wi-Fi behind a dead kernel must read offline, because the shell is nothing without the core behind it. 
+// So we probe the kernel's /health and flip green only on a real { msg: "ok" } round trip.
+//
+// navigator.onLine stays as a cheap pre-check — if the browser already knows it's offline we skip the fetch and paint red at once.
 const connection = document.getElementById("connection")!;
-function paintConnection(): void {
-  const online = navigator.onLine;
+const KERNEL_URL = import.meta.env.VITE_KERNEL_URL ?? "https://kernel.os-joy.com";
+const PROBE_INTERVAL_MS = 15_000; // gentle background poll; events cover the rest
+const PROBE_TIMEOUT_MS = 4_000; // a probe that hangs this long counts as offline
+
+let probing = false; // guard so overlapping triggers don't stack fetches
+
+function paintConnection(online: boolean): void {
   connection.classList.toggle("online", online);
   connection.classList.toggle("offline", !online);
   connection.textContent = online ? "online" : "offline";
 }
-paintConnection();
-window.addEventListener("online", paintConnection);
-window.addEventListener("offline", paintConnection);
+
+async function probeKernel(): Promise<void> {
+  // No network at all — don't bother the kernel, just paint red.
+  if (!navigator.onLine) {
+    paintConnection(false);
+    return;
+  }
+  if (probing) return;
+  probing = true;
+  // Abort a probe that hangs so a stalled socket can't freeze the dot.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${KERNEL_URL}/health`, { signal: ctrl.signal, cache: "no-store" });
+    const body = res.ok ? await res.json().catch(() => null) : null;
+    // Green only on a real healthy envelope — a 200 with the wrong shape, a CORS-blocked read, or any other status all read offline.
+    paintConnection(body?.msg === "ok");
+  } catch {
+    // Network error, CORS rejection, or timeout abort — kernel unreachable.
+    paintConnection(false);
+  } finally {
+    clearTimeout(timer);
+    probing = false;
+  }
+}
+
+// Probe now, on a gentle interval, and immediately whenever connectivity or visibility changes — 
+// so the dot is correct from first frame and snaps back the moment the network returns or a backgrounded tab refocuses.
+probeKernel();
+setInterval(probeKernel, PROBE_INTERVAL_MS);
+window.addEventListener("online", probeKernel);
+window.addEventListener("offline", () => paintConnection(false));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") probeKernel();
+});
 
 const term = new Terminal({
   cursorBlink: true,
@@ -53,8 +89,7 @@ const term = new Terminal({
 const fit = new FitAddon();
 term.loadAddon(fit);
 term.open(document.getElementById("terminal")!);
-// Canvas renderer instead of xterm's default DOM renderer —
-// far faster to paint, and unlike WebGL it has no GPU-context-loss cliff on mobile.
+// Canvas renderer instead of xterm's default DOM renderer — far faster to paint, and unlike WebGL it has no GPU-context-loss cliff on mobile. 
 // Must be loaded after open().
 term.loadAddon(new CanvasAddon());
 fit.fit();
@@ -62,8 +97,7 @@ window.addEventListener("resize", () => fit.fit());
 
 // --- launch ---------------------------------------------------------------
 
-// Pick the banner that fits the terminal we actually got
-// (phones can't hold the wide one-liner, so they get the stacked cut).
+// Pick the banner that fits the terminal we actually got (phones can't hold the wide one-liner, so they get the stacked cut).
 const wide = term.cols >= WIDE_MIN_COLS;
 const banner = wide ? BANNER_WIDE : BANNER_NARROW;
 const tagline = wide ? TAGLINE_WIDE : TAGLINE_NARROW;
@@ -77,15 +111,12 @@ writeLine(term, "type \x1b[1m/help\x1b[0m to see what's here — \x1b[1mTab\x1b[
 writeLine(term);
 prompt();
 
-// Make the shell installable and offline-capable.
-// Last, and off to the side — it must never delay or break the terminal that just drew above.
+// Make the shell installable and offline-capable. Last, and off to the side — it must never delay or break the terminal that just drew above.
 registerServiceWorker();
 
 // --- line editing ---------------------------------------------------------
 
-// xterm hands us raw keystrokes, not lines —
-// so we keep our own buffer and echo as we go.
-// Minimal but enough to *feel* like a shell.
+// xterm hands us raw keystrokes, not lines — so we keep our own buffer and echo as we go. Minimal but enough to *feel* like a shell.
 let line = "";
 
 term.onData((data) => {
@@ -136,8 +167,7 @@ function handle(raw: string): void {
     return;
   }
 
-  // Bare keywords carry no slash (e.g. `reset`);
-  // check them before the slash-only gate below.
+  // Bare keywords carry no slash (e.g. `reset`); check them before the slash-only gate below.
   const bareCmd = findCommand(input);
   if (bareCmd?.bare) {
     bareCmd.run?.(term, []);
@@ -168,7 +198,7 @@ function prompt(): void {
   term.write(PROMPT);
 }
 
-// The best command the current input is a prefix of — the part still untyped.
+// The best command the current input is a prefix of — the part still untyped. 
 // Empty unless the line is a lone "/verb" fragment that uniquely extends one.
 function ghostFor(input: string): string {
   if (!input.startsWith("/") || input.includes(" ")) return "";
@@ -178,10 +208,8 @@ function ghostFor(input: string): string {
   return match ? match.name.slice(typed.length) : "";
 }
 
-// Draw the inline suggestion (if any) in dim grey to the right of the cursor,
-// then park the cursor back at the typing position.
-// Cheap by design: only the tail of the line is ever touched —
-// the prompt is never repainted — so typing stays snappy.
+// Draw the inline suggestion (if any) in dim grey to the right of the cursor, then park the cursor back at the typing position. 
+// Cheap by design: only the tail of the line is ever touched — the prompt is never repainted — so typing stays snappy.
 function drawGhost(): void {
   const ghost = ghostFor(line);
   if (ghost) term.write(`\x1b[2m${ghost}\x1b[0m\x1b[${ghost.length}D`);
