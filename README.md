@@ -31,6 +31,8 @@ The contents of `dist/` are what land on the server's document root.
 
 Deployment is done by hand from the server — no CI pipeline. The box keeps a clone of this repo, builds it locally (`dist/` is gitignored, so the artifact is never pulled, only rebuilt), and the built `dist/` is mirrored into nginx's document root at `/var/www/shell.os-joy.com/html`.
 
+**The Joy's apps all live under `~/apps` on the server** — clone this repo to `~/apps/shell.os-joy.com`, the shared home for every Joy app on the box.
+
 One-time, on the server, with [Node.js](https://nodejs.org/) 18+ and Yarn installed:
 
 ```bash
