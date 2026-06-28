@@ -1,9 +1,10 @@
 import type { Terminal } from "@xterm/xterm";
 import { VERSION } from "./banner";
 
-// A command is a verb typed at the prompt. `run` writes its own output to the
-// terminal. `clear` is handled specially in the dispatcher (it needs the raw
-// terminal control), so it carries no `run` here.
+// A command is a verb typed at the prompt.
+// `run` writes its own output to the terminal.
+// `clear` is handled specially in the dispatcher (it needs the raw terminal control),
+// so it carries no `run` here.
 export interface Command {
   name: string;
   summary: string;
@@ -12,10 +13,10 @@ export interface Command {
   run?: (term: Terminal, args: string[]) => void;
 }
 
-// Stubs for this slice: listed by /help and acknowledged, but the real
-// behaviour (auth, session) lands in later slices.
+// Placeholder commands: listed by /help and acknowledged, but inert —
+// the auth/session behaviour behind them isn't implemented.
 const stub = (what: string): Command["run"] => (term) => {
-  writeLine(term, `${what} is not wired up yet — coming in a later slice.`);
+  writeLine(term, `${what} isn't available yet.`);
 };
 
 // Both /clear and the bare `reset` keyword wipe the screen.
@@ -26,9 +27,9 @@ export const COMMANDS: Command[] = [
     name: "help",
     summary: "list the available commands",
     run: (term) => {
-      // Lead with the running version — /help is where someone goes to get their
-      // bearings, so it's the natural place to surface it in full, not just the
-      // dim corner tag.
+      // Lead with the running version —
+      // /help is where someone goes to get their bearings,
+      // so it's the natural place to surface it in full, not just the dim corner tag.
       writeLine(term, `\x1b[2mthe joy — shell · ${VERSION}\x1b[0m`);
       writeLine(term);
       writeLine(term, "commands:");
@@ -49,9 +50,11 @@ export function findCommand(name: string): Command | undefined {
   return COMMANDS.find((c) => c.name === name);
 }
 
-// xterm needs CRLF — carriage return (\r, back to column 0) plus line feed
-// (\n, down a row) — for a real newline; \n alone only drops a row, leaving the
-// cursor in the same column. `writeln` appends the \r\n for us.
+// xterm needs CRLF —
+// carriage return (\r, back to column 0) plus line feed (\n, down a row) —
+// for a real newline;
+// \n alone only drops a row, leaving the cursor in the same column.
+// `writeln` appends the \r\n for us.
 export function writeLine(term: Terminal, text = ""): void {
   term.writeln(text);
 }

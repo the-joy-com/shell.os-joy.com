@@ -1,6 +1,6 @@
 # shell.os-joy.com
 
-The input shell for **The Joy** — a terminal that lives in the browser. An ASCII banner, a prompt, and a set of commands: `/help` and `/clear` do their work, `reset` clears the screen without a slash, and `/login`, `/logout`, `/status` are listed and acknowledged but not yet wired to a backend.
+The input shell for **The Joy** — a terminal that lives in the browser. An ASCII banner, a prompt, and a set of commands: `/help` and `/clear` do their work, `reset` clears the screen without a slash, and `/login`, `/logout`, `/status` are listed and acknowledged but not wired to a backend.
 
 Built with [Vite](https://vite.dev/), TypeScript, and [xterm.js](https://xtermjs.org/). It's a **static** app — `yarn build` emits a plain `dist/` of assets with no runtime backend, which is what gets served from `shell.os-joy.com`.
 
@@ -32,6 +32,16 @@ echo 'VITE_KERNEL_URL=http://127.0.0.1:9713' > .env.local
 then restart `yarn dev` (Vite reads env vars at startup — a hot reload won't pick it up). `.env.local` is a per-machine override and intentionally uncommitted: committing `localhost` would make every clone and prod build probe your dev box. Open the shell at `localhost:5173` or `127.0.0.1:5173` — both are in the kernel's CORS allow-list; any other host or port the browser will block, and the dot will read offline even with the kernel up.
 
 > The browser can only *read* the kernel's cross-origin response if the kernel sends a matching CORS header. The kernel allows the shell's origins (`shell.os-joy.com` plus the two localhost dev origins); that allow-list ships with the kernel, so the green dot at `shell.os-joy.com` only lights up once a kernel carrying it has been deployed.
+
+## the capture loop
+
+A line you type that **isn't** a `/command` is *content* — it gets sent to the [kernel](../kernel.os-joy.com). On Enter it echoes, then a dim `⋯ sending…` marker appears beneath it while the line is in flight to the kernel's `POST /intake`. On a real acknowledgement (`{ "msg": "copy" }`) that marker is rewritten **in place** to a full-brightness `COPY` — no second line is added. If the send fails for any reason — network error, a CORS-blocked read, a timeout, or a `200` with the wrong shape — the marker becomes `✗ not delivered` instead. **`COPY` only ever appears when the kernel actually received the line**, the same honesty rule the connectivity dot follows.
+
+**Input is never blocked on the network.** The prompt comes back the instant you hit Enter, so you can keep typing — and submitting — while earlier lines are still in flight. Each pending line remembers the terminal row its marker sits on and repaints just that row when its own ack lands, so several sends can be outstanding at once and resolve independently, in whatever order the kernel answers.
+
+There's no offline queue: a line that fails to send is marked `✗ not delivered` rather than held for retry. Queuing lines offline and draining them on reconnect — including repainting markers that have scrolled out of view — is a separate capability built on top of this. Submission is deliberately **not** gated on being logged in: the right to submit is never gated; whether identity changes the *reply* is the kernel's decision.
+
+It sends to the same `VITE_KERNEL_URL` the dot probes — so the `.env.local` recipe above points both at your local kernel in dev.
 
 ## build & preview the production bundle
 

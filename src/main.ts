@@ -20,13 +20,16 @@ const PROMPT = "joy \x1b[32m❯\x1b[0m "; // green chevron
 // Pin the running version to the bottom-right corner, present from the moment the shell opens. It lives outside the terminal so it never scrolls with the log, and reads from the same build-time VERSION the banner uses.
 document.getElementById("version")!.textContent = VERSION;
 
-// Mirror it on the bottom-left with a connectivity status — a coloured dot and the word to match: green "online", red "offline".
+// Mirror it on the bottom-left with a connectivity status —
+// a coloured dot and the word to match: green "online", red "offline".
 //
-// "online" here means the *kernel answered*, not merely that the browser has a network: 
-// a live Wi-Fi behind a dead kernel must read offline, because the shell is nothing without the core behind it. 
+// "online" here means the *kernel answered*, not merely that the browser has a network:
+// a live Wi-Fi behind a dead kernel must read offline,
+// because the shell is nothing without the core behind it.
 // So we probe the kernel's /health and flip green only on a real { msg: "ok" } round trip.
 //
-// navigator.onLine stays as a cheap pre-check — if the browser already knows it's offline we skip the fetch and paint red at once.
+// navigator.onLine stays as a cheap pre-check —
+// if the browser already knows it's offline we skip the fetch and paint red at once.
 const connection = document.getElementById("connection")!;
 const KERNEL_URL = import.meta.env.VITE_KERNEL_URL ?? "https://kernel.os-joy.com";
 const PROBE_INTERVAL_MS = 15_000; // gentle background poll; events cover the rest
@@ -65,7 +68,7 @@ async function probeKernel(): Promise<void> {
   }
 }
 
-// Probe now, on a gentle interval, and immediately whenever connectivity or visibility changes — 
+// Probe now, on a gentle interval, and immediately whenever connectivity or visibility changes —
 // so the dot is correct from first frame and snaps back the moment the network returns or a backgrounded tab refocuses.
 probeKernel();
 setInterval(probeKernel, PROBE_INTERVAL_MS);
@@ -89,7 +92,8 @@ const term = new Terminal({
 const fit = new FitAddon();
 term.loadAddon(fit);
 term.open(document.getElementById("terminal")!);
-// Canvas renderer instead of xterm's default DOM renderer — far faster to paint, and unlike WebGL it has no GPU-context-loss cliff on mobile. 
+// Canvas renderer instead of xterm's default DOM renderer —
+// far faster to paint, and unlike WebGL it has no GPU-context-loss cliff on mobile.
 // Must be loaded after open().
 term.loadAddon(new CanvasAddon());
 fit.fit();
@@ -149,7 +153,7 @@ term.onData((data) => {
       break;
     }
     default:
-      // Printable input only; swallow other control sequences for now.
+      // Printable input only; swallow other control sequences.
       if (data >= " ") {
         line += data;
         term.write("\x1b[K" + data); // erase the stale ghost, then echo the char
@@ -176,8 +180,11 @@ function handle(raw: string): void {
   }
 
   if (!input.startsWith("/")) {
-    writeLine(term, `\x1b[2mthis slice only knows /commands — try /help\x1b[0m`);
-    prompt();
+    // Not a command — it's content for The Joy.
+    // Capture it: draw the pending marker, hand the prompt straight back, and let the send resolve in the background.
+    // No auth gate on purpose — the right to submit is never gated.
+    // Identity is the server's call.
+    captureLine(input);
     return;
   }
 
@@ -194,11 +201,78 @@ function handle(raw: string): void {
   prompt();
 }
 
+const SEND_TIMEOUT_MS = 6_000; // a send that hangs this long is treated as not delivered
+
+// Capture a line: ship it to the kernel without ever blocking the prompt.
+//
+// The echoed input sits on the row above;
+// we draw a dim "⋯ sending…" beneath it, hand the prompt straight back,
+// then — once the round trip resolves — rewrite *that one row in place*
+// to a bright COPY (a real ack) or an honest "✗ not delivered" (anything else).
+// Input is free the whole time and many lines can be in flight at once,
+// each repainting its own row when its own ack lands.
+function captureLine(text: string): void {
+  term.write("\x1b[2m⋯ sending…\x1b[0m\r\n"); // dim marker, then drop to the next row
+  // Remember the marker's absolute buffer row so the ack can find it later —
+  // even after the user has typed and submitted more below it.
+  // xterm parses writes asynchronously,
+  // so the cursor is only trustworthy inside a write callback:
+  // by the time the prompt has been drawn, the marker is the row just above it.
+  const marker = { row: -1 };
+  term.write(PROMPT, () => {
+    const buf = term.buffer.active;
+    marker.row = buf.baseY + buf.cursorY - 1;
+  });
+  void deliver(text, marker);
+}
+
+async function deliver(text: string, marker: { row: number }): Promise<void> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), SEND_TIMEOUT_MS);
+  let copied = false;
+  try {
+    const res = await fetch(`${KERNEL_URL}/intake`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ line: text }),
+      signal: ctrl.signal,
+      cache: "no-store",
+    });
+    const body = res.ok ? await res.json().catch(() => null) : null;
+    // COPY only on a real "copy" ack —
+    // a 200 with the wrong shape, a CORS-blocked read, a timeout,
+    // or any network error all read as not delivered.
+    copied = body?.msg === "copy";
+  } catch {
+    copied = false;
+  } finally {
+    clearTimeout(timer);
+  }
+  paintMarker(marker.row, copied);
+}
+
+// Repaint a marker's row in place:
+// save the cursor, hop up to its row, clear and rewrite it, hop back —
+// so the line the user is typing right now is never touched,
+// and no second line is ever added.
+// If the marker has scrolled up out of the viewport it's no longer addressable by cursor moves,
+// so we leave it;
+// on a live round trip the ack is near-instant and the row is still on screen.
+// (Only a line that sits pending long enough to scroll off would slip past this.)
+function paintMarker(row: number, copied: boolean): void {
+  const buf = term.buffer.active;
+  const rowsUp = buf.baseY + buf.cursorY - row;
+  if (row < 0 || row < buf.baseY || rowsUp <= 0) return;
+  const verdict = copied ? "\x1b[92mCOPY\x1b[0m" : "\x1b[2m✗ not delivered\x1b[0m";
+  // \x1b7 save cursor · move up to the row · \r col 0 · \x1b[2K wipe it · verdict · \x1b8 restore.
+  term.write(`\x1b7\x1b[${rowsUp}A\r\x1b[2K${verdict}\x1b8`);
+}
+
 function prompt(): void {
   term.write(PROMPT);
 }
 
-// The best command the current input is a prefix of — the part still untyped. 
+// The best command the current input is a prefix of — the part still untyped.
 // Empty unless the line is a lone "/verb" fragment that uniquely extends one.
 function ghostFor(input: string): string {
   if (!input.startsWith("/") || input.includes(" ")) return "";
@@ -208,8 +282,11 @@ function ghostFor(input: string): string {
   return match ? match.name.slice(typed.length) : "";
 }
 
-// Draw the inline suggestion (if any) in dim grey to the right of the cursor, then park the cursor back at the typing position. 
-// Cheap by design: only the tail of the line is ever touched — the prompt is never repainted — so typing stays snappy.
+// Draw the inline suggestion (if any) in dim grey to the right of the cursor,
+// then park the cursor back at the typing position.
+// Cheap by design:
+// only the tail of the line is ever touched — the prompt is never repainted —
+// so typing stays snappy.
 function drawGhost(): void {
   const ghost = ghostFor(line);
   if (ghost) term.write(`\x1b[2m${ghost}\x1b[0m\x1b[${ghost.length}D`);

@@ -9,9 +9,9 @@
 // that's what gives it whole-app scope.
 // It is type-checked by tsconfig.sw.json (WebWorker lib).
 //
-// This slice keeps the logic small: cache the app shell, serve from cache when the network is gone.
-// The outbox + Background Sync the capture loop needs will grow inside this same worker —
-// which is why it's on the full TS toolchain now.
+// The logic is kept small: cache the app shell, serve from cache when the network is gone.
+// The outbox + Background Sync the capture loop needs grow inside this same worker —
+// which is why it's on the full TS toolchain.
 
 // In a service worker `self` is a ServiceWorkerGlobalScope, not a Window.
 // Narrow it once here, so the events and methods below type-check.
