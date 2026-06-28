@@ -1,0 +1,21 @@
+{
+  // The service worker type-checks against the WebWorker lib (ServiceWorkerGlobalScope, FetchEvent, Cache…),
+  // which is mutually exclusive with the app's DOM lib —
+  // so it gets its own config.
+  // Same strictness as the app otherwise.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": ["ES2022", "WebWorker"],
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src/sw.ts"]
+}

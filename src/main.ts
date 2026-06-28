@@ -12,6 +12,7 @@ import {
   WIDE_MIN_COLS,
 } from "./banner";
 import { COMMANDS, findCommand, writeLine } from "./commands";
+import { registerServiceWorker } from "./pwa";
 
 const PROMPT = "joy \x1b[32m❯\x1b[0m "; // green chevron
 
@@ -52,6 +53,10 @@ writeLine(term);
 writeLine(term, "type \x1b[1m/help\x1b[0m to see what's here — \x1b[1mTab\x1b[0m autocompletes.");
 writeLine(term);
 prompt();
+
+// Make the shell installable and offline-capable. Last, and off to the side —
+// it must never delay or break the terminal that just drew above.
+registerServiceWorker();
 
 // --- line editing ---------------------------------------------------------
 

@@ -4,6 +4,8 @@ The input shell for **The Joy** — a terminal that lives in the browser. An ASC
 
 Built with [Vite](https://vite.dev/), TypeScript, and [xterm.js](https://xtermjs.org/). It's a **static** app — `yarn build` emits a plain `dist/` of assets with no runtime backend, which is what gets served from `shell.os-joy.com`.
 
+It's also an installable **PWA**: added to a phone's home screen it launches standalone — no browser chrome — and a service worker caches the shell so it opens even with no network.
+
 ## run it locally
 
 You need [Node.js](https://nodejs.org/) 18+ and [Yarn](https://yarnpkg.com/) (classic, 1.x).
