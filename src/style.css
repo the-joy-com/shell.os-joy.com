@@ -1,0 +1,23 @@
+:root {
+  --bg: #0b0e0d;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+}
+
+#terminal {
+  position: fixed;
+  inset: 0;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+/* xterm paints its own viewport; just give it the whole screen. */
+.xterm,
+.xterm-viewport {
+  height: 100% !important;
+}
