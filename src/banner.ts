@@ -31,10 +31,12 @@ export const BANNER_NARROW = String.raw`
  ╚════╝  ╚═════╝    ╚═╝
 `;
 
-const VERSION = `v${__APP_VERSION__}`;
+export const VERSION = `v${__APP_VERSION__}`;
 
-export const TAGLINE_WIDE = `an always-on machine symbiot · ${VERSION}`;
-export const TAGLINE_NARROW = `always-on symbiot · ${VERSION}`;
+// The version is pinned in the bottom-right corner and shown by /help, so it
+// would only be noise here.
+export const TAGLINE_WIDE = `an always-on machine symbiot`;
+export const TAGLINE_NARROW = `always-on symbiot`;
 
 // Smallest column count the wide banner needs before it starts wrapping.
 export const WIDE_MIN_COLS = 56;

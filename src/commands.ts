@@ -1,4 +1,5 @@
 import type { Terminal } from "@xterm/xterm";
+import { VERSION } from "./banner";
 
 // A command is a verb typed at the prompt. `run` writes its own output to the
 // terminal. `clear` is handled specially in the dispatcher (it needs the raw
@@ -25,6 +26,11 @@ export const COMMANDS: Command[] = [
     name: "help",
     summary: "list the available commands",
     run: (term) => {
+      // Lead with the running version — /help is where someone goes to get their
+      // bearings, so it's the natural place to surface it in full, not just the
+      // dim corner tag.
+      writeLine(term, `\x1b[2mthe joy — shell · ${VERSION}\x1b[0m`);
+      writeLine(term);
       writeLine(term, "commands:");
       for (const cmd of COMMANDS) {
         const label = cmd.bare ? cmd.name : `/${cmd.name}`;

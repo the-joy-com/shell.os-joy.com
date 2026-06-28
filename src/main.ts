@@ -9,12 +9,18 @@ import {
   BANNER_NARROW,
   TAGLINE_WIDE,
   TAGLINE_NARROW,
+  VERSION,
   WIDE_MIN_COLS,
 } from "./banner";
 import { COMMANDS, findCommand, writeLine } from "./commands";
 import { registerServiceWorker } from "./pwa";
 
 const PROMPT = "joy \x1b[32m❯\x1b[0m "; // green chevron
+
+// Pin the running version to the bottom-right corner, present from the moment
+// the shell opens. It lives outside the terminal so it never scrolls with the
+// log, and reads from the same build-time VERSION the banner uses.
+document.getElementById("version")!.textContent = VERSION;
 
 const term = new Terminal({
   cursorBlink: true,
