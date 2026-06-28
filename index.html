@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="color-scheme" content="dark" />
+    <!-- Tab/bookmark icon (the green-J mark), reusing the same source as the PWA icons.
+         .ico carries 16/32/48 for desktop; the 32 PNG is preferred where supported; apple-touch-icon is iOS's home-screen/Safari icon. -->
+    <link rel="icon" href="./favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <!-- PWA: manifest enables install (name, icon, standalone). No theme-color since standalone has no browser chrome. -->
     <link rel="manifest" href="./manifest.webmanifest" />
     <title>the joy — shell</title>
