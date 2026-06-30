@@ -12,7 +12,9 @@ import {
   VERSION,
   WIDE_MIN_COLS,
 } from "./banner";
+import { createCapture } from "./capture";
 import { COMMANDS, findCommand, writeLine } from "./commands";
+import { type Envelope, isOk } from "./kernel";
 import { registerServiceWorker } from "./pwa";
 
 const PROMPT = "joy \x1b[32m❯\x1b[0m "; // green chevron
@@ -56,9 +58,9 @@ async function probeKernel(): Promise<void> {
   const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
     const res = await fetch(`${KERNEL_URL}/health`, { signal: ctrl.signal, cache: "no-store" });
-    const body = res.ok ? await res.json().catch(() => null) : null;
+    const body: Envelope | null = res.ok ? await res.json().catch(() => null) : null;
     // Green only on a real healthy envelope — a 200 with the wrong shape, a CORS-blocked read, or any other status all read offline.
-    paintConnection(body?.msg === "ok");
+    paintConnection(isOk(body));
   } catch {
     // Network error, CORS rejection, or timeout abort — kernel unreachable.
     paintConnection(false);
@@ -181,10 +183,11 @@ function handle(raw: string): void {
 
   if (!input.startsWith("/")) {
     // Not a command — it's content for The Joy.
-    // Capture it: draw the pending marker, hand the prompt straight back, and let the send resolve in the background.
+    // Hand it to the capture loop: it draws the pending marker,
+    // gives the prompt straight back, and delivers in the background.
     // No auth gate on purpose — the right to submit is never gated.
     // Identity is the server's call.
-    captureLine(input);
+    capture.submit(input);
     return;
   }
 
@@ -201,72 +204,30 @@ function handle(raw: string): void {
   prompt();
 }
 
-const SEND_TIMEOUT_MS = 6_000; // a send that hangs this long is treated as not delivered
+// --- capture & delivery ---------------------------------------------------
 
-// Capture a line: ship it to the kernel without ever blocking the prompt.
-//
-// The echoed input sits on the row above;
-// we draw a dim "⋯ sending…" beneath it, hand the prompt straight back,
-// then — once the round trip resolves — rewrite *that one row in place*
-// to a bright COPY (a real ack) or an honest "✗ not delivered" (anything else).
-// Input is free the whole time and many lines can be in flight at once,
-// each repainting its own row when its own ack lands.
-function captureLine(text: string): void {
-  term.write("\x1b[2m⋯ sending…\x1b[0m\r\n"); // dim marker, then drop to the next row
-  // Remember the marker's absolute buffer row so the ack can find it later —
-  // even after the user has typed and submitted more below it.
-  // xterm parses writes asynchronously,
-  // so the cursor is only trustworthy inside a write callback:
-  // by the time the prompt has been drawn, the marker is the row just above it.
-  const marker = { row: -1 };
-  term.write(PROMPT, () => {
-    const buf = term.buffer.active;
-    marker.row = buf.baseY + buf.cursorY - 1;
-  });
-  void deliver(text, marker);
+// The capture loop owns getting a typed line to the kernel and keeping its marker honest.
+// It needs two things from the terminal: a fresh prompt after a captured line,
+// and a way to redraw the line being typed when a delivery notice has to print above it.
+const capture = createCapture(term, {
+  prompt,
+  redrawInput: () => {
+    term.write(PROMPT + line);
+    drawGhost();
+  },
+});
+
+// The worker reports each queued line's fate back here; route it to the markers.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (event) =>
+    capture.applyVerdict(event.data),
+  );
 }
 
-async function deliver(text: string, marker: { row: number }): Promise<void> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), SEND_TIMEOUT_MS);
-  let copied = false;
-  try {
-    const res = await fetch(`${KERNEL_URL}/intake`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ line: text }),
-      signal: ctrl.signal,
-      cache: "no-store",
-    });
-    const body = res.ok ? await res.json().catch(() => null) : null;
-    // COPY only on a real "copy" ack —
-    // a 200 with the wrong shape, a CORS-blocked read, a timeout,
-    // or any network error all read as not delivered.
-    copied = body?.msg === "copy";
-  } catch {
-    copied = false;
-  } finally {
-    clearTimeout(timer);
-  }
-  paintMarker(marker.row, copied);
-}
-
-// Repaint a marker's row in place:
-// save the cursor, hop up to its row, clear and rewrite it, hop back —
-// so the line the user is typing right now is never touched,
-// and no second line is ever added.
-// If the marker has scrolled up out of the viewport it's no longer addressable by cursor moves,
-// so we leave it;
-// on a live round trip the ack is near-instant and the row is still on screen.
-// (Only a line that sits pending long enough to scroll off would slip past this.)
-function paintMarker(row: number, copied: boolean): void {
-  const buf = term.buffer.active;
-  const rowsUp = buf.baseY + buf.cursorY - row;
-  if (row < 0 || row < buf.baseY || rowsUp <= 0) return;
-  const verdict = copied ? "\x1b[92mCOPY\x1b[0m" : "\x1b[2m✗ not delivered\x1b[0m";
-  // \x1b7 save cursor · move up to the row · \r col 0 · \x1b[2K wipe it · verdict · \x1b8 restore.
-  term.write(`\x1b7\x1b[${rowsUp}A\r\x1b[2K${verdict}\x1b8`);
-}
+// Drain the outbox now (in case a previous visit left lines queued),
+// and again whenever the network returns — the fallback for browsers without Background Sync.
+capture.flushNow();
+window.addEventListener("online", () => capture.flushNow());
 
 function prompt(): void {
   term.write(PROMPT);
