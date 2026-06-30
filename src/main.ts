@@ -4,6 +4,7 @@ import { CanvasAddon } from "@xterm/addon-canvas";
 import "@xterm/xterm/css/xterm.css";
 import "./style.css";
 
+import { type AuthIo, runAuth } from "./auth";
 import {
   BANNER_WIDE,
   BANNER_NARROW,
@@ -125,12 +126,32 @@ registerServiceWorker();
 // xterm hands us raw keystrokes, not lines — so we keep our own buffer and echo as we go. Minimal but enough to *feel* like a shell.
 let line = "";
 
+// When a flow (login) needs the line the symbiot types next — the email, then the code —
+// it parks a resolver here. While one is set, Enter feeds the line to it instead of the dispatcher,
+// so the terminal is modal for the length of that read.
+let pending: ((line: string | null) => void) | null = null;
+
+// Prompt, then resolve with the next line entered — or null if it's abandoned with Ctrl-C.
+function readLine(promptText: string): Promise<string | null> {
+  term.write(promptText);
+  return new Promise((resolve) => (pending = resolve));
+}
+
 term.onData((data) => {
   switch (data) {
     case "\r": // Enter
       term.write("\x1b[K\r\n"); // drop any inline suggestion, then newline
-      handle(line);
-      line = "";
+      if (pending) {
+        // A flow is waiting on this line — hand it over and stay out of the dispatcher.
+        const resolve = pending;
+        pending = null;
+        const entered = line;
+        line = "";
+        resolve(entered);
+      } else {
+        handle(line);
+        line = "";
+      }
       break;
     case "\x7f": // Backspace
       if (line.length > 0) {
@@ -142,7 +163,14 @@ term.onData((data) => {
     case "\x03": // Ctrl-C — abandon the current line
       term.write("\x1b[K^C\r\n");
       line = "";
-      prompt();
+      if (pending) {
+        // Abandon a flow's pending read; the flow bails and restores the prompt itself.
+        const resolve = pending;
+        pending = null;
+        resolve(null);
+      } else {
+        prompt();
+      }
       break;
     case "\t": // Tab — accept the inline suggestion
     case "\x1b[C": { // Right arrow — same, fish-style
@@ -165,6 +193,16 @@ term.onData((data) => {
 });
 
 // --- dispatch -------------------------------------------------------------
+
+// The identity verbs run as modal async flows (see the auth-verb branch in handle),
+// not one-shot cmd.run handlers, because they read the email and the code on the lines that follow.
+const AUTH_VERBS = new Set(["login", "logout", "status"]);
+
+// The narrow surface the auth flows get on the terminal: read the next line, print a line.
+const io: AuthIo = {
+  readLine,
+  print: (text) => writeLine(term, text),
+};
 
 function handle(raw: string): void {
   const input = raw.trim();
@@ -192,6 +230,13 @@ function handle(raw: string): void {
   }
 
   const [verb, ...args] = input.slice(1).split(/\s+/);
+
+  // Identity verbs own the screen for a modal exchange (email, then code),
+  // so they run as their own async flow; the prompt is restored once it settles.
+  if (AUTH_VERBS.has(verb)) {
+    void runAuth(verb, args, KERNEL_URL, io).finally(prompt);
+    return;
+  }
 
   const cmd = findCommand(verb);
   if (!cmd || !cmd.run) {

@@ -2,9 +2,10 @@ import type { Terminal } from "@xterm/xterm";
 import { VERSION } from "./banner";
 
 // A command is a verb typed at the prompt.
-// `run` writes its own output to the terminal.
-// `clear` is handled specially in the dispatcher (it needs the raw terminal control),
-// so it carries no `run` here.
+// Most carry a `run` that writes their own output to the terminal.
+// The identity verbs (login/logout/status) carry no `run`:
+// they're modal — they read the email and then the code on the lines that follow —
+// so the dispatcher routes them to the async auth flow instead.
 export interface Command {
   name: string;
   summary: string;
@@ -12,12 +13,6 @@ export interface Command {
   bare?: boolean;
   run?: (term: Terminal, args: string[]) => void;
 }
-
-// Placeholder commands: listed by /help and acknowledged, but inert —
-// the auth/session behaviour behind them isn't implemented.
-const stub = (what: string): Command["run"] => (term) => {
-  writeLine(term, `${what} isn't available yet.`);
-};
 
 // Deliberately lenient:
 // this catches the typos that matter — a missing @, no domain, a stray space —
@@ -38,23 +33,6 @@ const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function looksLikeEmail(address: string): boolean {
   return EMAIL_SHAPE.test(address.trim());
 }
-
-// /login checks the address locally and flags an obvious typo before anything crosses the wire —
-// the kernel can't warn about a typo without becoming an enumeration oracle (see the note on EMAIL_SHAPE),
-// so that courtesy lives here.
-const login: Command["run"] = (term, args) => {
-  const address = args.join(" ").trim(); // tolerate an accidental space in the address
-  if (!address) {
-    writeLine(term, "usage: /login your@email");
-    return;
-  }
-  if (!looksLikeEmail(address)) {
-    writeLine(term, `\x1b[33mhmm — “${address}” doesn't look like an email address.\x1b[0m`);
-    writeLine(term, "\x1b[2mcheck for a typo and try again; nothing was sent.\x1b[0m");
-    return;
-  }
-  writeLine(term, "login isn't available yet.");
-};
 
 // Both /clear and the bare `reset` keyword wipe the screen.
 const clearScreen: Command["run"] = (term) => term.clear();
@@ -78,9 +56,10 @@ export const COMMANDS: Command[] = [
   },
   { name: "clear", summary: "wipe the screen", run: clearScreen },
   { name: "reset", summary: "clear the screen (no slash)", bare: true, run: clearScreen },
-  { name: "login", summary: "request a sign-in code", run: login },
-  { name: "logout", summary: "end the session", run: stub("logout") },
-  { name: "status", summary: "show connection state", run: stub("status") },
+  // Identity verbs carry no run — they're modal, dispatched to the auth flow by main.ts.
+  { name: "login", summary: "sign in with an email code" },
+  { name: "logout", summary: "end the session" },
+  { name: "status", summary: "show connection + session state" },
 ];
 
 export function findCommand(name: string): Command | undefined {
