@@ -6,6 +6,14 @@ Built with [Vite](https://vite.dev/), TypeScript, and [xterm.js](https://xtermjs
 
 It's also an installable **PWA**: added to a phone's home screen it launches standalone — no browser chrome — and a service worker caches the shell so it opens even with no network.
 
+## the three repos
+
+The Joy is built in the open across three repositories — the same three linked bottom-center in the shell itself:
+
+- **shell** (this repo) — the browser terminal: <https://github.com/the-joy-com/shell.os-joy.com>
+- **kernel** — the core the shell talks to: <https://github.com/the-joy-com/kernel.os-joy.com>
+- **build** — the build log, written session by session: <https://github.com/the-joy-com/build.os-joy.com>
+
 ## run it locally
 
 You need [Node.js](https://nodejs.org/) 18+ and [Yarn](https://yarnpkg.com/) (classic, 1.x).

@@ -181,9 +181,10 @@ export async function respondTo(request: Request): Promise<Response> {
 // --- the reply channel: a kernel push says there's something to read -------
 
 // A push carries only a nudge, never any content — nothing private rides a third-party
-// push service. There are two kinds, told apart by the payload's shape:
+// push service. Every payload names its family in a `kind`, and the two are told apart on
+// that one field:
 //
-//   • a reply nudge — {id, status} — for an answer to a line the symbiot sent.
+//   • a reply nudge — {kind: "reply", id, status} — for an answer to a line the symbiot sent.
 //     We fetch the real reply from /answers, hand it to any open terminal to render inline,
 //     and show a notification. We deliberately do NOT drop the inbound entry here: an open
 //     terminal drops it once it has rendered; if none is open, it stays for the next open's
@@ -196,13 +197,14 @@ export async function respondTo(request: Request): Promise<Response> {
 //     no page is open, opening one from the notification runs the same reconcile at
 //     launch — so the missive surfaces either way.
 //
-// Every push must produce a visible notification (a subscription is userVisibleOnly).
+// A kind we don't recognise (or an unreadable payload) still owes a notification —
+// a subscription is userVisibleOnly — so it falls through to a generic one rather than acting.
 export async function handlePush(event: PushEvent): Promise<void> {
   let payload: { id?: unknown; kind?: unknown } | undefined;
   try {
     payload = event.data?.json();
   } catch {
-    // Unreadable payload — we can't act on it, but still surface a generic notification below.
+    // Unreadable payload — we can't act on it, but still surface the generic notification below.
   }
 
   // A missive nudge: no content to fetch, just ask any open page to pull traffic waiting.
@@ -215,23 +217,31 @@ export async function handlePush(event: PushEvent): Promise<void> {
     return;
   }
 
-  // Otherwise a reply nudge for the symbiot's own message.
-  const id = typeof payload?.id === "number" ? payload.id : null;
-  let outcome: Outcome = { status: "pending", answer: null };
-  if (id !== null) {
-    try {
-      const res = await fetch(`${KERNEL_URL}/answers?id=${id}`, { cache: "no-store" });
-      outcome = readOutcome(res.ok ? await res.json().catch(() => null) : null);
-    } catch {
-      // Couldn't reach /answers — leave it pending; the notification still says to look,
-      // and the next open reconciles from the inbound store.
+  // A reply nudge for the symbiot's own message.
+  if (payload?.kind === KERNEL_MSG.reply) {
+    const id = typeof payload.id === "number" ? payload.id : null;
+    let outcome: Outcome = { status: "pending", answer: null };
+    if (id !== null) {
+      try {
+        const res = await fetch(`${KERNEL_URL}/answers?id=${id}`, { cache: "no-store" });
+        outcome = readOutcome(res.ok ? await res.json().catch(() => null) : null);
+      } catch {
+        // Couldn't reach /answers — leave it pending; the notification still says to look,
+        // and the next open reconciles from the inbound store.
+      }
     }
+    await postToClients({ type: "answer", id, status: outcome.status, answer: outcome.answer });
+    await worker.registration.showNotification("The Joy", {
+      body: _notificationBody(outcome),
+      tag: id !== null ? `answer-${id}` : undefined, // one message, one notification, replaced not stacked
+      data: { id },
+    });
+    return;
   }
-  await postToClients({ type: "answer", id, status: outcome.status, answer: outcome.answer });
+
+  // An unknown kind: nothing to act on, but the subscription still owes a visible notification.
   await worker.registration.showNotification("The Joy", {
-    body: _notificationBody(outcome),
-    tag: id !== null ? `answer-${id}` : undefined, // one message, one notification, replaced not stacked
-    data: { id },
+    body: "there's an update on your message.",
   });
 }
 

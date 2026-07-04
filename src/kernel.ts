@@ -30,6 +30,7 @@ export const KERNEL_MSG = {
   answer: "answer", // /answers — the message is answered; data.answer holds the reply
   copy: "roger", // /intake — received all your last, durably written down
   pending: "wait out", // /answers — still in flight, no outcome yet
+  reply: "reply", // push nudge kind — a reply to the symbiot's own message; its outcome rides in status
   unknown: "unknown", // /answers — no message with that id
   // traffic waiting
   trafficWaiting: "traffic waiting", // GET /inbox — the symbiot's unseen inbound
