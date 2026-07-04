@@ -59,6 +59,8 @@ export const COMMANDS: Command[] = [
   // Identity verbs carry no run — they're modal, dispatched to the auth flow by main.ts.
   { name: "login", summary: "sign in with an email code" },
   { name: "logout", summary: "end the session" },
+  // Carries no run either — dispatched to its async flow by main.ts, like the identity verbs.
+  { name: "notify", summary: "get a nudge when The Joy answers" },
   { name: "status", summary: "show connection + session state" },
 ];
 

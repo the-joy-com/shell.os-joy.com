@@ -18,5 +18,5 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
-  "exclude": ["src/sw.ts"]
+  "exclude": ["src/sw.ts", "src/sw-handlers.ts"]
 }

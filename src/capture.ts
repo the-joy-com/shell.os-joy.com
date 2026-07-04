@@ -1,31 +1,52 @@
 import type { Terminal } from "@xterm/xterm";
-import { enqueue, SYNC_TAG } from "./outbox";
+import { type Envelope, KERNEL_LINE, readOutcome } from "./kernel";
+import { getToken } from "./session";
+import { allInbound, forget, isTracked } from "./store/inbound";
+import { enqueue, SYNC_TAG } from "./store/outbox";
 
 // The capture loop: take a line the symbiot typed, get it to the kernel,
 // and keep the little marker under it honest about where it is.
 //
-// The page never sends anything itself anymore — it writes the line to the outbox
-// and asks the service worker to deliver. The worker is what reaches the kernel
-// (so a line still goes up after the network returns, even with the app closed),
+// The page never sends anything itself anymore —
+// it writes the line to the outbox and asks the service worker to deliver.
+// The worker is what reaches the kernel (so a line still goes up after the network returns, even with the app closed),
 // and it reports back here, by id, so each marker can be updated:
 //   • delivered → a bright COPY
 //   • requeued  → back to a waiting ⋯ queued
 //
 // Two things are deliberately kept out of this file: the prompt and the in-progress input line.
-// Those belong to the terminal, so the caller hands us two small functions —
-// one to draw a fresh prompt, one to redraw the line the symbiot is currently typing —
+// Those belong to the terminal,
+// so the caller hands us two small functions — one to draw a fresh prompt, one to redraw the line the symbiot is currently typing —
 // and we call them when delivery output has to share the screen with live typing.
 
 // Marker text. Dim while waiting, bright once the kernel has it.
 const SENDING = "\x1b[2m⋯ sending…\x1b[0m"; // online, an attempt is in flight
 const QUEUED = "\x1b[2m⋯ queued\x1b[0m"; // offline, held until the network returns
 const COPY = "\x1b[92mCOPY\x1b[0m"; // received, repainted in place
-// Printed fresh when the markers are gone — the screen was wiped by a
-// reload/reopen, or the lines scrolled off — so there's nothing to repaint.
+// Printed fresh when the markers are gone —
+// the screen was wiped by a reload/reopen, or the lines scrolled off —
+// so there's nothing to repaint.
 // One summary for the whole drained batch, not one identical notice per line.
 function copyFresh(n: number): string {
   const tail = n === 1 ? "queued line delivered" : `${n} queued lines delivered`;
   return `\x1b[92mCOPY\x1b[0m \x1b[2m(${tail})\x1b[0m`;
+}
+
+// A kernel answer, printed as a fresh line that stands on its own terms.
+// `❮ joy` mirrors the prompt's `joy ❯` — a reply coming back where a line went out.
+// Green when answered, red when the kernel gave up.
+// It does not name or quote what it answers: inbound is decoupled from the sender,
+// so the shell keeps no copy of the line it once sent, and the answer is shown as itself.
+const JOY_IN = "\x1b[92m❮ joy\x1b[0m"; // an answer arriving
+const JOY_GAVE_UP = "\x1b[31m❮ joy\x1b[0m"; // the kernel abandoned the message
+
+// The line shown for a settled message,
+// or null when there's nothing to show (still pending, or an id the kernel disowns —
+// those are handled by forgetting, not printing).
+function answerLine(status: string, answer: string): string | null {
+  if (status === "answer") return `${JOY_IN} ${answer}`;
+  if (status === "abandoned") return `${JOY_GAVE_UP} ${KERNEL_LINE.abandonedNotice}`;
+  return null;
 }
 
 // Background Sync isn't in the standard DOM lib, so describe the slice we use.
@@ -57,14 +78,26 @@ export interface Capture {
   submit(text: string): void;
   // Apply a worker verdict to the markers it names.
   applyVerdict(data: unknown): void;
+  // Apply an inbound message the worker pushed (from a kernel push): render it and stop tracking it.
+  applyAnswer(data: unknown): void;
   // Nudge the worker to drain the outbox now — used at startup and on reconnect.
   // Also the fallback for browsers without Background Sync.
   flushNow(): void;
+  // Reconcile the inbound store against the kernel:
+  // surface anything inbound we haven't seen yet (including messages settled while the app was shut),
+  // then stop tracking it.
+  // The backbone of the reply channel — a push only surfaces one sooner;
+  // this is what guarantees none is lost.
+  flushAnswers(): void;
+  // Discover and surface messages the kernel raised for the symbiot on its own —
+  // ones this shell never sent, so there's no local id to reconcile from.
+  // Identity-gated: a no-op without a session. Shown once, then acknowledged so they don't return.
+  flushInbox(): void;
 }
 
 export function createCapture(
   term: Terminal,
-  hooks: { prompt: () => void; redrawInput: () => void },
+  hooks: { prompt: () => void; redrawInput: () => void; kernelUrl: string },
 ): Capture {
   // Each queued line's marker row, by outbox id.
   // A row holder (not a bare number) so the value can be filled in by the marker's async write callback,
@@ -128,10 +161,10 @@ export function createCapture(
   function applyVerdict(data: unknown): void {
     if (!isVerdict(data)) return;
     if (data.type === "delivered") {
-      // Repaint each marker still on screen in place. Tally the ones whose
-      // marker is gone (reload/reopen, or scrolled off) and announce them with
-      // a single fresh summary — so a drained queue of N lines reads as one
-      // notice, not N identical ones.
+      // Repaint each marker still on screen in place.
+      // Tally the ones whose marker is gone (reload/reopen, or scrolled off)
+      // and announce them with a single fresh summary —
+      // so a drained queue of N lines reads as one notice, not N identical ones.
       let gone = 0;
       for (const id of data.ids) {
         const slot = rows.get(id);
@@ -154,5 +187,90 @@ export function createCapture(
     void requestFlush();
   }
 
-  return { submit, applyVerdict, flushNow };
+  // Render an inbound message and stop tracking it.
+  // Shared by the push path and the reconcile path,
+  // so both surface a message the same way and neither shows it twice.
+  async function surface(id: number, status: string, answer: string): Promise<void> {
+    const line = answerLine(status, answer);
+    if (line) printFresh(line);
+    // Forget it once shown, or if the kernel disowns the id (unknown) — either way it will never need surfacing again.
+    // A still-pending message returns no line and is left be.
+    if (line || status === "unknown") await forget(id);
+  }
+
+  function applyAnswer(data: unknown): void {
+    // The worker forwards a kernel push as { type: "answer", id, status, answer }.
+    const msg = data as { type?: string; id?: number; status?: string; answer?: string | null };
+    if (msg?.type !== "answer" || typeof msg.id !== "number") return;
+    void (async () => {
+      // Dedup by id: if it's no longer tracked, a reconcile already surfaced it.
+      if (!(await isTracked(msg.id!))) return;
+      await surface(msg.id!, msg.status ?? "", msg.answer ?? "");
+    })();
+  }
+
+  function flushAnswers(): void {
+    void (async () => {
+      for (const entry of await allInbound()) {
+        let body: Envelope | null = null;
+        try {
+          const res = await fetch(`${hooks.kernelUrl}/answers?id=${entry.id}`, { cache: "no-store" });
+          body = res.ok ? await res.json().catch(() => null) : null;
+        } catch {
+          body = null; // couldn't reach the kernel — leave it tracked, try again next open
+        }
+        const outcome = readOutcome(body); // a null body reads as pending, so nothing is dropped
+        await surface(entry.id, outcome.status, outcome.answer ?? "");
+      }
+    })();
+  }
+
+  // Discover unsolicited inbound: messages the kernel raised for the symbiot that this
+  // shell never sent, so nothing local points at them. /answers can't reach them (it's
+  // unauthed, keyed by an id we'd have to already hold); /inbox is the authed discovery.
+  // Surface each, then acknowledge so the kernel stops offering it.
+  function flushInbox(): void {
+    // These messages are addressed to a symbiot, so there's nothing to fetch without a session.
+    const token = getToken();
+    if (!token) return;
+    void (async () => {
+      let messages: { id: number; body: string }[] = [];
+      try {
+        const res = await fetch(`${hooks.kernelUrl}/inbox`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        const body: Envelope | null = res.ok ? await res.json().catch(() => null) : null;
+        const list = (body?.data as { messages?: unknown } | null)?.messages;
+        if (Array.isArray(list)) {
+          messages = list.filter(
+            (m): m is { id: number; body: string } =>
+              !!m &&
+              typeof (m as { id?: unknown }).id === "number" &&
+              typeof (m as { body?: unknown }).body === "string",
+          );
+        }
+      } catch {
+        return; // couldn't reach the kernel — try again next open
+      }
+      if (messages.length === 0) return;
+      for (const m of messages) {
+        const line = answerLine("answer", m.body);
+        if (line) printFresh(line);
+      }
+      // Acknowledge only once they're shown. An ack that never lands just surfaces them
+      // again next time — the safe direction (at-least-once), never a message dropped silently.
+      try {
+        await fetch(`${hooks.kernelUrl}/inbox/seen`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ ids: messages.map((m) => m.id) }),
+        });
+      } catch {
+        // Ack didn't land — harmless; they'll be offered again and shown once more.
+      }
+    })();
+  }
+
+  return { submit, applyVerdict, applyAnswer, flushNow, flushAnswers, flushInbox };
 }

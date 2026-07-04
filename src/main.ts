@@ -15,12 +15,15 @@ import {
 } from "./banner";
 import { createCapture } from "./capture";
 import { COMMANDS, findCommand, writeLine } from "./commands";
-import { type Envelope, isOk } from "./kernel";
+import { type Envelope, isOk, KERNEL_MSG } from "./kernel";
+import { runNotify } from "./notify";
 import { registerServiceWorker } from "./pwa";
 
 const PROMPT = "joy \x1b[32m❯\x1b[0m "; // green chevron
 
-// Pin the running version to the bottom-right corner, present from the moment the shell opens. It lives outside the terminal so it never scrolls with the log, and reads from the same build-time VERSION the banner uses.
+// Pin the running version to the bottom-right corner, present from the moment the shell opens.
+// It lives outside the terminal so it never scrolls with the log,
+// and reads from the same build-time VERSION the banner uses.
 document.getElementById("version")!.textContent = VERSION;
 
 // Mirror it on the bottom-left with a connectivity status —
@@ -29,7 +32,7 @@ document.getElementById("version")!.textContent = VERSION;
 // "online" here means the *kernel answered*, not merely that the browser has a network:
 // a live Wi-Fi behind a dead kernel must read offline,
 // because the shell is nothing without the core behind it.
-// So we probe the kernel's /health and flip green only on a real { msg: "ok" } round trip.
+// So we probe the kernel's /health and flip green only on a real { msg: "loud and clear" } round trip.
 //
 // navigator.onLine stays as a cheap pre-check —
 // if the browser already knows it's offline we skip the fetch and paint red at once.
@@ -60,7 +63,8 @@ async function probeKernel(): Promise<void> {
   try {
     const res = await fetch(`${KERNEL_URL}/health`, { signal: ctrl.signal, cache: "no-store" });
     const body: Envelope | null = res.ok ? await res.json().catch(() => null) : null;
-    // Green only on a real healthy envelope — a 200 with the wrong shape, a CORS-blocked read, or any other status all read offline.
+    // Green only on a real healthy envelope —
+    // a 200 with the wrong shape, a CORS-blocked read, or any other status all read offline.
     paintConnection(isOk(body));
   } catch {
     // Network error, CORS rejection, or timeout abort — kernel unreachable.
@@ -234,7 +238,19 @@ function handle(raw: string): void {
   // Identity verbs own the screen for a modal exchange (email, then code),
   // so they run as their own async flow; the prompt is restored once it settles.
   if (AUTH_VERBS.has(verb)) {
-    void runAuth(verb, args, KERNEL_URL, io).finally(prompt);
+    // After the flow settles, discover any inbox waiting on a fresh session —
+    // a no-op when the verb wasn't a login, or left us logged out.
+    void runAuth(verb, args, KERNEL_URL, io).finally(() => {
+      prompt();
+      capture.flushInbox();
+    });
+    return;
+  }
+
+  // /notify is async too (permission, subscribe, register), and reaches the kernel —
+  // same shape as the auth verbs: run the flow, restore the prompt when it settles.
+  if (verb === "notify") {
+    void runNotify(KERNEL_URL, io).finally(prompt);
     return;
   }
 
@@ -260,19 +276,41 @@ const capture = createCapture(term, {
     term.write(PROMPT + line);
     drawGhost();
   },
+  kernelUrl: KERNEL_URL,
 });
 
-// The worker reports each queued line's fate back here; route it to the markers.
+// The worker reports back here:
+// a queued line's delivery fate (→ the markers),
+// an answer it received on a push (→ rendered as a fresh line, and stopped being awaited),
+// or a missive nudge (→ pull traffic waiting now, since the worker can't read the authed /inbox itself).
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.addEventListener("message", (event) =>
-    capture.applyVerdict(event.data),
-  );
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (event.data?.type === "answer") capture.applyAnswer(event.data);
+    else if (event.data?.type === KERNEL_MSG.trafficWaiting) capture.flushInbox();
+    else capture.applyVerdict(event.data);
+  });
 }
 
-// Drain the outbox now (in case a previous visit left lines queued),
-// and again whenever the network returns — the fallback for browsers without Background Sync.
+// On open: drain any lines a previous visit left queued,
+// reconcile the inbound store (surfacing anything the kernel settled while we were gone),
+// and discover any unsolicited inbound the kernel raised for us on its own (needs a session).
+// All three again when the network returns;
+// the two reconciles also on refocus, since a message may have landed meanwhile.
+// (flushAnswers is the backbone of the reply channel — a push only surfaces one sooner.)
 capture.flushNow();
-window.addEventListener("online", () => capture.flushNow());
+capture.flushAnswers();
+capture.flushInbox();
+window.addEventListener("online", () => {
+  capture.flushNow();
+  capture.flushAnswers();
+  capture.flushInbox();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    capture.flushAnswers();
+    capture.flushInbox();
+  }
+});
 
 function prompt(): void {
   term.write(PROMPT);

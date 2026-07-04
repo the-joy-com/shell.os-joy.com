@@ -16,7 +16,7 @@
 // The shell never claims a login the kernel wouldn't honour.
 
 import { looksLikeEmail } from "./commands";
-import type { Envelope } from "./kernel";
+import { type Envelope, KERNEL_LINE, KERNEL_MSG } from "./kernel";
 import { clearToken, getToken, setToken } from "./session";
 
 // What the flows are allowed to do to the terminal — nothing more.
@@ -62,7 +62,7 @@ const TURNED_AWAY = dim("the kernel turned that request away — give it a momen
 // The kernel reached but turned the code down — a wrong guess, an expired code,
 // or one malformed enough that validation refused it outright.
 // One wording for all three, so a blank code can't be told apart from a bad one.
-const BAD_CODE = "that code didn't work — try again";
+const BAD_CODE = KERNEL_LINE.loginFailed;
 
 // A request to the kernel.
 // Resolves to reached:false only when the fetch itself fails (network down, CORS, timeout);
@@ -113,7 +113,7 @@ async function login(args: string[], kernelUrl: string, io: AuthIo): Promise<voi
     const probe = await call(`${kernelUrl}/status`, { method: "GET" }, existing);
     const data = probe.envelope?.data as SessionData | undefined;
     if (data?.authed) {
-      io.print(`already logged in as ${data.email}.`);
+      io.print(`already ${KERNEL_MSG.loggedIn} as ${data.email}.`);
       return;
     }
     // The kernel answered and it isn't a live session — the stored token is spent
@@ -170,13 +170,13 @@ async function login(args: string[], kernelUrl: string, io: AuthIo): Promise<voi
     return;
   }
   setToken(data.token);
-  io.print(`${good("logged in")} as ${data.email}.`);
+  io.print(`${good(KERNEL_MSG.loggedIn)} as ${data.email}.`);
 }
 
 async function logout(kernelUrl: string, io: AuthIo): Promise<void> {
   const token = getToken();
   if (!token) {
-    io.print("you're not logged in.");
+    io.print(KERNEL_MSG.notAuthed);
     return;
   }
   // Tell the kernel to revoke, then forget it locally.
@@ -184,7 +184,7 @@ async function logout(kernelUrl: string, io: AuthIo): Promise<void> {
   // and the token expires on its own server-side anyway.
   await postJson(`${kernelUrl}/logout`, {}, token);
   clearToken();
-  io.print("logged out.");
+  io.print(KERNEL_MSG.loggedOut);
 }
 
 async function status(kernelUrl: string, io: AuthIo): Promise<void> {
@@ -199,9 +199,9 @@ async function status(kernelUrl: string, io: AuthIo): Promise<void> {
   io.print(`kernel: ${good("online")}`);
   const data = st.envelope?.data as SessionData | null;
   if (data?.authed) {
-    io.print(`session: logged in as ${data.email}`);
+    io.print(`session: ${KERNEL_MSG.authed} as ${data.email}`);
   } else {
-    io.print("session: not logged in");
+    io.print(`session: ${KERNEL_MSG.notAuthed}`);
     // The kernel says this token buys nothing —
     // drop it so the shell stops carrying a dead credential.
     if (token) clearToken();
