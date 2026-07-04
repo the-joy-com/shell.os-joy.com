@@ -196,6 +196,25 @@ export function createCapture(
     // Forget it once shown, or if the kernel disowns the id (unknown) — either way it will never need surfacing again.
     // A still-pending message returns no line and is left be.
     if (line || status === "unknown") await forget(id);
+    // Once the outcome is actually on screen, tell the kernel it's out.
+    // This is the reply's counterpart to the outbox's COPY:
+    // the kernel marks it delivered on a real showing, never on a hopeful guess.
+    if (line) void ackDelivered(id);
+  }
+
+  // Confirm to the kernel that a message's outcome has been shown, so it can mark the reply truly out.
+  // Unauthed like /answers itself — the id is the capability — and fire-and-forget:
+  // a lost ack is harmless, the outcome was shown, only the kernel's delivered_at stays unset.
+  async function ackDelivered(id: number): Promise<void> {
+    try {
+      await fetch(`${hooks.kernelUrl}/answers/delivered`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [id] }),
+      });
+    } catch {
+      // Ack didn't land — harmless; the reply was shown, only delivered_at stays unset.
+    }
   }
 
   function applyAnswer(data: unknown): void {
