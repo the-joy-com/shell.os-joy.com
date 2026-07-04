@@ -89,6 +89,9 @@ export interface Capture {
   // The backbone of the reply channel — a push only surfaces one sooner;
   // this is what guarantees none is lost.
   flushAnswers(): void;
+  // Start (or re-arm) the on-page poll that surfaces an in-flight reply live, without a push.
+  // Called on open/refocus; self-terminating when nothing is in-flight or the tab is hidden.
+  startAnswerPoll(): void;
   // Discover and surface messages the kernel raised for the symbiot on its own —
   // ones this shell never sent, so there's no local id to reconcile from.
   // Identity-gated: a no-op without a session. Shown once, then acknowledged so they don't return.
@@ -172,6 +175,8 @@ export function createCapture(
         rows.delete(id);
       }
       if (gone > 0) printFresh(copyFresh(gone));
+      // The line is now durably in-flight; watch for its answer while the symbiot is here.
+      startAnswerPoll();
     } else {
       // Requeued: show each waiting again if its marker is still on screen.
       // If it's gone, there's nothing to show now — it stays in the outbox,
@@ -228,20 +233,55 @@ export function createCapture(
     })();
   }
 
-  function flushAnswers(): void {
-    void (async () => {
-      for (const entry of await allInbound()) {
-        let body: Envelope | null = null;
-        try {
-          const res = await fetch(`${hooks.kernelUrl}/answers?id=${entry.id}`, { cache: "no-store" });
-          body = res.ok ? await res.json().catch(() => null) : null;
-        } catch {
-          body = null; // couldn't reach the kernel — leave it tracked, try again next open
-        }
-        const outcome = readOutcome(body); // a null body reads as pending, so nothing is dropped
-        await surface(entry.id, outcome.status, outcome.answer ?? "");
+  // Reconcile every tracked in-flight id against the kernel, surfacing whatever has settled.
+  // The awaitable core behind flushAnswers and the live-reply poll below.
+  async function reconcileAnswers(): Promise<void> {
+    for (const entry of await allInbound()) {
+      let body: Envelope | null = null;
+      try {
+        const res = await fetch(`${hooks.kernelUrl}/answers?id=${entry.id}`, { cache: "no-store" });
+        body = res.ok ? await res.json().catch(() => null) : null;
+      } catch {
+        body = null; // couldn't reach the kernel — leave it tracked, try again next open
       }
-    })();
+      const outcome = readOutcome(body); // a null body reads as pending, so nothing is dropped
+      await surface(entry.id, outcome.status, outcome.answer ?? "");
+    }
+  }
+
+  function flushAnswers(): void {
+    void reconcileAnswers();
+  }
+
+  // --- live reply: surface an in-flight answer on the page, without a push and without a reload ---
+  // Push is for when the app is closed; this is the on-page path, and a visitor gets it for free —
+  // no subscription, no login. After a line is delivered (COPY), the worker takes a moment to answer,
+  // so we keep reconciling until it lands, then stop. The poll runs only while something is in-flight
+  // and the tab is actually being watched; it stops itself the instant the tracked set empties or the
+  // tab is hidden (a refocus restarts it, see main.ts), so it never churns in the background.
+  // Snappy at first, then easing off, so a slow or hung message doesn't hammer the kernel.
+  const POLL_BACKOFF_MS = [900, 900, 1500, 2500, 4000]; // step delays; the last repeats until settled
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let pollStep = 0;
+
+  async function pollTick(): Promise<void> {
+    pollTimer = null;
+    if (document.hidden) return; // not being watched — a refocus will restart the poll
+    if ((await allInbound()).length === 0) return; // nothing in-flight — nothing to wait for
+    await reconcileAnswers(); // render whatever is ready; surface() drops each shown id from the tracked set
+    if ((await allInbound()).length === 0) return; // all surfaced — done until the next line
+    const delay = POLL_BACKOFF_MS[Math.min(pollStep, POLL_BACKOFF_MS.length - 1)];
+    pollStep += 1;
+    pollTimer = setTimeout(() => void pollTick(), delay);
+  }
+
+  // Start (or re-arm) the live-reply poll: on a fresh delivery, and on open/refocus in case a reply
+  // is still owed from before. Resets the cadence so a new line always gets the snappy first tick.
+  // A no-op in effect when nothing is tracked — the first tick sees an empty set and stops.
+  function startAnswerPoll(): void {
+    pollStep = 0;
+    if (pollTimer !== null) clearTimeout(pollTimer);
+    pollTimer = setTimeout(() => void pollTick(), POLL_BACKOFF_MS[0]);
   }
 
   // Discover unsolicited inbound: messages the kernel raised for the symbiot that this
@@ -291,5 +331,5 @@ export function createCapture(
     })();
   }
 
-  return { submit, applyVerdict, applyAnswer, flushNow, flushAnswers, flushInbox };
+  return { submit, applyVerdict, applyAnswer, flushNow, flushAnswers, flushInbox, startAnswerPoll };
 }

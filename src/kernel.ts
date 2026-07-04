@@ -50,7 +50,8 @@ export const KERNEL_LINE = {
   abandonedNotice: "no joy", // shown when a message is abandoned — retry budget spent
   loginFailed: "that code didn't work — try again", // POST /login/verify — wrong or spent code
   loginSent: "if that address is registered, a login code is on its way", // POST /login
-  standinAnswer: "good copy", // placeholder in data.answer until real work exists
+  standinAnswerAnon: "authenticate", // placeholder reply to an unauthed line — the caller isn't recognized
+  standinAnswerAuthed: "good copy", // placeholder reply to a recognized symbiot's line; the kernel picks which, by session
 } as const;
 
 // True only when the kernel really acked receipt of a line —

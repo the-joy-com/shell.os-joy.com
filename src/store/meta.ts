@@ -7,23 +7,34 @@
 // so IndexedDB is the one store both sides can open,
 // and anything one side produces for the other to consume has to pass through it.
 //
-// Today there is exactly one such thing: the reply-channel id.
-//   • The page mints it: /notify subscribes the browser to push and registers that with the
+// Two such things live here, both page-produced and worker-consumed:
+//
+//   • the reply-channel id.
+//     The page mints it: /notify subscribes the browser to push and registers that with the
 //     kernel (POST /push/subscribe), which returns an id naming this browser's reply channel;
 //     the page writes it here (setReplyChannelId, see notify.ts).
-//   • The worker spends it: when it delivers a batch of lines to /intake it tags the batch
+//     The worker spends it: when it delivers a batch of lines to /intake it tags the batch
 //     with that id (getReplyChannelId, see sw.ts), so the kernel knows which channel to nudge
 //     once the message is answered or abandoned.
-// Without this hand-off the kernel would still store the answer, but have no channel to nudge —
-// the reply would wait silently for the next open instead of tapping the symbiot on the shoulder.
+//     Without this hand-off the kernel would still store the answer, but have no channel to nudge —
+//     the reply would wait silently for the next open instead of tapping the symbiot on the shoulder.
 //
-// Deliberately small and untyped-by-key: it holds this one value and shouldn't grow into a junk drawer.
+//   • the session token.
+//     Its home of record is session.ts (localStorage, the page's fast path), but the worker,
+//     which is what actually POSTs /intake, can't read localStorage — so the token is mirrored here
+//     for it to attach as a Bearer credential. That's what lets the kernel tell whose line it is
+//     and answer a recognized symbiot differently from an anonymous caller; without the mirror
+//     every line the worker sends would look unauthed, no matter who was logged in.
+//     The page writes it on login and clears it on logout (see session.ts); the worker only reads it.
+//
+// Deliberately small and untyped-by-key: it holds these hand-off values and shouldn't grow into a junk drawer.
 // Anything durable and structured enough to deserve its own shape earns its own store,
 // the way the outbox (lines) and inbound stores do.
 
 import { META_STORE as STORE, openDb, tx } from "./idb";
 
 const REPLY_CHANNEL_ID = "replyChannelId";
+const SESSION_TOKEN = "sessionToken";
 
 interface MetaRow {
   key: string;
@@ -58,4 +69,19 @@ export async function getReplyChannelId(): Promise<number | null> {
 
 export async function setReplyChannelId(id: number): Promise<void> {
   await set(REPLY_CHANNEL_ID, id);
+}
+
+// The session token as the worker can see it, or null when logged out.
+// The worker reads it to attach Authorization on /intake; the page mirrors it here from session.ts.
+export async function getSessionToken(): Promise<string | null> {
+  const value = await get(SESSION_TOKEN);
+  return typeof value === "string" ? value : null;
+}
+
+export async function setSessionToken(token: string): Promise<void> {
+  await set(SESSION_TOKEN, token);
+}
+
+export async function clearSessionToken(): Promise<void> {
+  await set(SESSION_TOKEN, null);
 }

@@ -11,7 +11,7 @@
 
 import { type Envelope, type Outcome, KERNEL_LINE, KERNEL_MSG, copyId, isCopy, readOutcome } from "./kernel";
 import { track } from "./store/inbound";
-import { getReplyChannelId } from "./store/meta";
+import { getReplyChannelId, getSessionToken } from "./store/meta";
 import { allPending, formatBatch, markDelivered } from "./store/outbox";
 
 // In a service worker `self` is a ServiceWorkerGlobalScope, not a Window.
@@ -85,6 +85,10 @@ async function drainOutbox(): Promise<void> {
   // The reply channel to notify when this message settles, if this browser has one.
   // Sent with the batch so the kernel ties the answer's nudge to the right channel.
   const replyChannelId = await getReplyChannelId();
+  // The session token, mirrored here by the page (the worker can't read localStorage).
+  // Attached as a Bearer credential so the kernel can tell whose line this is and answer accordingly;
+  // null when logged out, and then the line simply goes up unauthed — which the input layer accepts.
+  const token = await getSessionToken();
   let body: Envelope | null = null;
   // Abort a hung send so the drain always settles —
   // otherwise the in-flight lock below would stick and block every later drain.
@@ -93,7 +97,10 @@ async function drainOutbox(): Promise<void> {
   try {
     const res = await fetch(`${KERNEL_URL}/intake`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({
         line: formatBatch(pending),
         ...(replyChannelId !== null ? { reply_channel_id: replyChannelId } : {}),

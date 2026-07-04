@@ -297,18 +297,23 @@ if ("serviceWorker" in navigator) {
 // All three again when the network returns;
 // the two reconciles also on refocus, since a message may have landed meanwhile.
 // (flushAnswers is the backbone of the reply channel — a push only surfaces one sooner.)
+// startAnswerPoll keeps that backbone running while a reply is still owed and the tab is watched,
+// so an answer lands live on the page without a push or a reload; it self-terminates when none is in flight.
 capture.flushNow();
 capture.flushAnswers();
 capture.flushInbox();
+capture.startAnswerPoll();
 window.addEventListener("online", () => {
   capture.flushNow();
   capture.flushAnswers();
   capture.flushInbox();
+  capture.startAnswerPoll();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     capture.flushAnswers();
     capture.flushInbox();
+    capture.startAnswerPoll();
   }
 });
 

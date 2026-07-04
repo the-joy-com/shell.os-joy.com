@@ -119,7 +119,7 @@ async function login(args: string[], kernelUrl: string, io: AuthIo): Promise<voi
     // The kernel answered and it isn't a live session — the stored token is spent
     // (a day passed, or it was revoked), so drop it and start fresh.
     // If the kernel never answered, keep the token; we can't judge it from here.
-    if (probe.reached) clearToken();
+    if (probe.reached) await clearToken();
   }
 
   // The address: from the command if given (e.g. `/login me@x.com`), else asked.
@@ -169,7 +169,7 @@ async function login(args: string[], kernelUrl: string, io: AuthIo): Promise<voi
     io.print(verified.envelope?.msg ?? BAD_CODE);
     return;
   }
-  setToken(data.token);
+  await setToken(data.token);
   io.print(`${good(KERNEL_MSG.loggedIn)} as ${data.email}.`);
 }
 
@@ -183,7 +183,7 @@ async function logout(kernelUrl: string, io: AuthIo): Promise<void> {
   // The local forget is unconditional — a kernel we can't reach still logs you out of this shell,
   // and the token expires on its own server-side anyway.
   await postJson(`${kernelUrl}/logout`, {}, token);
-  clearToken();
+  await clearToken();
   io.print(KERNEL_MSG.loggedOut);
 }
 
@@ -204,6 +204,6 @@ async function status(kernelUrl: string, io: AuthIo): Promise<void> {
     io.print(`session: ${KERNEL_MSG.notAuthed}`);
     // The kernel says this token buys nothing —
     // drop it so the shell stops carrying a dead credential.
-    if (token) clearToken();
+    if (token) await clearToken();
   }
 }
