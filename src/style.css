@@ -1,5 +1,11 @@
 :root {
   --bg: #0b0e0d;
+  /* Height of the bottom band reserved for the fixed footer furniture
+     (#connection / #version / #source). They sit at bottom: 8px with a 12px
+     font, so ~24px is occupied; 44px leaves a clear breathing gap between the
+     last message row and the pills, not just enough to clear them. The
+     terminal box ends above this band so content never scrolls under them. */
+  --footer-band: 44px;
 }
 
 html,
@@ -11,7 +17,14 @@ body {
 
 #terminal {
   position: fixed;
-  inset: 0;
+  /* Sit the terminal box above the footer band: it fills the screen except for
+     the bottom --footer-band strip, where the fixed corner pills live. The log
+     (FitAddon sizes xterm to this box) then physically ends above the pills
+     instead of scrolling through them — no reliance on padding being read. */
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: var(--footer-band);
   padding: 12px;
   box-sizing: border-box;
 }
