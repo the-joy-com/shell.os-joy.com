@@ -157,7 +157,10 @@ export function createCapture(
   // the app closed, and the worker delivered them after a reopen onto a blank screen.
   function printFresh(text: string): void {
     term.write("\r\x1b[2K"); // wipe the current prompt+input line
-    term.write(`${text}\r\n`); // the notice
+    // Any embedded newline becomes CRLF: xterm's bare \n line-feeds without returning to
+    // column 0, so a multi-line answer would staircase rightward — each line starting where
+    // the last ended. \r\n resets the column, landing continuation lines flush-left.
+    term.write(`${text.replace(/\r?\n/g, "\r\n")}\r\n`); // the notice
     hooks.redrawInput(); // prompt + whatever was being typed
   }
 
