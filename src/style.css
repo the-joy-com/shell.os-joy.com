@@ -1,10 +1,11 @@
 :root {
   --bg: #0b0e0d;
   /* Height of the bottom band reserved for the fixed footer furniture
-     (#connection / #version / #source). They sit at bottom: 8px with a 12px
-     font, so ~24px is occupied; 44px leaves a clear breathing gap between the
-     last message row and the pills, not just enough to clear them. The
-     terminal box ends above this band so content never scrolls under them. */
+     (#connection / #version / #source).
+     They sit at bottom: 8px with a 12px font, so ~24px is occupied;
+     44px leaves a clear breathing gap between the last message row and the pills,
+     not just enough to clear them.
+     The terminal box ends above this band so content never scrolls under them. */
   --footer-band: 44px;
 }
 
@@ -17,29 +18,89 @@ body {
 
 #terminal {
   position: fixed;
-  /* Sit the terminal box above the footer band: it fills the screen except for
-     the bottom --footer-band strip, where the fixed corner pills live. The log
-     (FitAddon sizes xterm to this box) then physically ends above the pills
-     instead of scrolling through them — no reliance on padding being read. */
+  /* Sit the terminal box above the footer band:
+     it fills the screen except for the bottom --footer-band strip, where the fixed corner pills live.
+     The log scrolls inside this box and ends above the pills instead of running through them —
+     no reliance on padding being read. */
   top: 0;
   right: 0;
   left: 0;
   bottom: var(--footer-band);
   padding: 12px;
   box-sizing: border-box;
+  /* The terminal itself is the scroll region: content flows top-down — banner,
+     then the prompt right beneath it — and only scrolls once it fills the box.
+     Real text throughout, so it selects, copies, and scrolls by touch on its own,
+     which is the whole reason xterm is gone. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  font-family: "Cascadia Code", "Fira Code", Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.3;
+  color: #cfe8d8;
+  background: var(--bg);
 }
 
-/* xterm paints its own viewport; just give it the whole screen. */
-.xterm,
-.xterm-viewport {
-  height: 100% !important;
+/* Each emitted line.
+   pre-wrap keeps spacing and lets a long reply wrap rather than overflow;
+   the min-height gives a blank line a real row. */
+.term-log .line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 1.3em;
+}
+
+/* Banner rows are the exception: ASCII art that wraps turns to mush, so it must never wrap.
+   main.ts only ever draws a cut it measured to fit, so this line sits within the box;
+   the rule is the guarantee that a marginal miss clips rather than folds. */
+.term-log .line.banner {
+  white-space: pre;
+}
+
+/* The input line, flowing right after the log: prompt, then the editable, then the dim ghost. */
+.term-input {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A real contenteditable — the soft keyboard sees genuine text here, so
+   backspace and the caret behave like any web input, the fix at the heart of the rewrite. */
+.term-input .editable {
+  outline: none;
+  caret-color: #6ee7a8;
+}
+
+/* The inline suggestion, dim to the right of what's typed. */
+.term-input .ghost {
+  opacity: 0.35;
+}
+
+/* The SGR colours the shell emits, turned into classes by term.ts. */
+#terminal .b {
+  font-weight: 600;
+}
+#terminal .dim {
+  opacity: 0.5;
+}
+#terminal .red {
+  color: #e76e6e;
+}
+#terminal .green {
+  color: #4ea36f;
+}
+#terminal .yellow {
+  color: #d7ba7d;
+}
+#terminal .bgreen {
+  color: #6ee7a8;
 }
 
 /* Running version, pinned to the bottom-right corner over the terminal.
-   It sits above the xterm layer but never scrolls with the log, so the
-   build that's running is always one glance away.
-   pointer-events: none lets clicks and text selection fall through to the
-   terminal underneath, so the tag is read-only furniture, never a target. */
+   It sits above the terminal but never scrolls with the log,
+   so the build that's running is always one glance away.
+   pointer-events: none lets clicks and text selection fall through to the terminal underneath,
+   so the tag is read-only furniture, never a target. */
 #version {
   position: fixed;
   right: 12px;
@@ -54,11 +115,10 @@ body {
 }
 
 /* Connectivity status, pinned to the bottom-left corner over the terminal.
-   Mirrors the version tag on the opposite side: same fixed layer, same
-   read-only furniture treatment (clicks fall through). A coloured dot
-   (the ::before) plus its word — main.ts sets the label text and toggles the
-   .online / .offline class; the colours live here so the wiring stays a
-   single class swap. */
+   Mirrors the version tag on the opposite side: same fixed layer, same read-only furniture treatment (clicks fall through).
+   A coloured dot (the ::before) plus its word —
+   main.ts sets the label text and toggles the .online / .offline class;
+   the colours live here so the wiring stays a single class swap. */
 #connection {
   position: fixed;
   left: 12px;
@@ -101,11 +161,11 @@ body {
   box-shadow: 0 0 4px #e76e6e;
 }
 
-/* Source repos, pinned bottom-center over the terminal — The Joy's three GitHub
-   repos, between the version tag and the connectivity dot. Same fixed layer and
-   dim treatment as those, with one difference: this is the footer's only real
-   target. The block keeps clicks falling through to the terminal (pointer-events:
-   none), and each link re-enables itself, so only the words are clickable. */
+/* Source repos, pinned bottom-center over the terminal —
+   The Joy's three GitHub repos, between the version tag and the connectivity dot.
+   Same fixed layer and dim treatment as those, with one difference: this is the footer's only real target.
+   The block keeps clicks falling through to the terminal (pointer-events: none),
+   and each link re-enables itself, so only the words are clickable. */
 #source {
   position: fixed;
   left: 50%;

@@ -1,4 +1,4 @@
-import type { Terminal } from "@xterm/xterm";
+import type { Term } from "./term";
 import { VERSION } from "./banner";
 
 // A command is a verb typed at the prompt.
@@ -11,7 +11,7 @@ export interface Command {
   summary: string;
   // Bare keywords are typed without a leading slash (e.g. `reset`).
   bare?: boolean;
-  run?: (term: Terminal, args: string[]) => void;
+  run?: (term: Term, args: string[]) => void;
 }
 
 // Deliberately lenient:
@@ -68,11 +68,8 @@ export function findCommand(name: string): Command | undefined {
   return COMMANDS.find((c) => c.name === name);
 }
 
-// xterm needs CRLF —
-// carriage return (\r, back to column 0) plus line feed (\n, down a row) —
-// for a real newline;
-// \n alone only drops a row, leaving the cursor in the same column.
-// `writeln` appends the \r\n for us.
-export function writeLine(term: Terminal, text = ""): void {
-  term.writeln(text);
+// A thin pass-through kept so callers read as "write a line" rather than reaching into the terminal.
+// The terminal appends the line to the log and colours any ANSI it carries.
+export function writeLine(term: Term, text = ""): void {
+  term.writeLine(text);
 }

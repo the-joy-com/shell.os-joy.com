@@ -7,7 +7,7 @@
 // /login is modal: it reads the email, then the code, on the lines the symbiot types next.
 // main.ts owns the keyboard, so it hands us a small AuthIo — read a line, print a line —
 // rather than us reaching into the terminal ourselves.
-// That keeps the prompt in one place and this file free of xterm.
+// That keeps the prompt in one place and this file free of the terminal itself.
 //
 // The kernel is the authority on a session's life (a day, then it's gone),
 // so we never second-guess it:

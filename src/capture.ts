@@ -1,4 +1,4 @@
-import type { Terminal } from "@xterm/xterm";
+import type { Term } from "./term";
 import { type Envelope, KERNEL_LINE, readOutcome } from "./kernel";
 import { getToken } from "./session";
 import { allInbound, forget, isTracked } from "./store/inbound";
@@ -14,17 +14,16 @@ import { enqueue, SYNC_TAG } from "./store/outbox";
 //   • delivered → a bright COPY
 //   • requeued  → back to a waiting ⋯ queued
 //
-// Two things are deliberately kept out of this file: the prompt and the in-progress input line.
-// Those belong to the terminal,
-// so the caller hands us two small functions — one to draw a fresh prompt, one to redraw the line the symbiot is currently typing —
-// and we call them when delivery output has to share the screen with live typing.
+// A marker is just a log line the terminal handed back as a node,
+// so repainting it is setting that node's text —
+// no cursor to move, no row to find, and it reads as "gone" precisely when the node has left the document (a /clear, say).
 
 // Marker text. Dim while waiting, bright once the kernel has it.
 const SENDING = "\x1b[2m⋯ sending…\x1b[0m"; // online, an attempt is in flight
 const QUEUED = "\x1b[2m⋯ queued\x1b[0m"; // offline, held until the network returns
 const COPY = "\x1b[92mCOPY\x1b[0m"; // received, repainted in place
-// Printed fresh when the markers are gone —
-// the screen was wiped by a reload/reopen, or the lines scrolled off —
+// Printed fresh when the marker's node is gone —
+// the log was wiped by a /clear, or the line never had a marker (a queued line delivered after a reopen) —
 // so there's nothing to repaint.
 // One summary for the whole drained batch, not one identical notice per line.
 function copyFresh(n: number): string {
@@ -74,7 +73,7 @@ function isVerdict(data: unknown): data is Verdict {
 
 export interface Capture {
   // Capture a typed line. Never blocks.
-  // The marker and a fresh prompt are drawn at once; persist + delivery happen in the background.
+  // The marker is drawn at once; persist + delivery happen in the background.
   submit(text: string): void;
   // Apply a worker verdict to the markers it names.
   applyVerdict(data: unknown): void;
@@ -98,14 +97,11 @@ export interface Capture {
   flushInbox(): void;
 }
 
-export function createCapture(
-  term: Terminal,
-  hooks: { prompt: () => void; redrawInput: () => void; kernelUrl: string },
-): Capture {
-  // Each queued line's marker row, by outbox id.
-  // A row holder (not a bare number) so the value can be filled in by the marker's async write callback,
-  // even after the outbox write that gave us the id has already resolved.
-  const rows = new Map<number, { row: number }>();
+export function createCapture(term: Term, hooks: { kernelUrl: string }): Capture {
+  // Each queued line's marker node, by outbox id.
+  // The node is the log line the terminal handed back at submit;
+  // a delivery verdict repaints it, and a /clear that removes it is read as "gone" via isConnected.
+  const markers = new Map<number, HTMLElement>();
 
   // Ask the worker to deliver: register a Background Sync (the durable retry-on-reconnect,
   // fires even with the app closed) and post a "flush" so a line typed online goes up at once.
@@ -122,71 +118,55 @@ export function createCapture(
   }
 
   function submit(text: string): void {
-    // Draw the marker and hand the prompt straight back — synchronously —
+    // Draw the marker as its own log line right away —
+    // the terminal already echoed the typed line and the prompt is still live below,
     // so the symbiot is never made to wait on storage or the network to say the next thing.
-    // The marker's row is captured in the write callback.
-    const slot = { row: -1 };
-    term.write(navigator.onLine ? SENDING : QUEUED, () => {
-      const buf = term.buffer.active;
-      slot.row = buf.baseY + buf.cursorY;
-    });
-    term.write("\r\n");
-    hooks.prompt();
+    const node = term.writeLine(navigator.onLine ? SENDING : QUEUED);
     // Persist and hand off to the worker in the background.
     void (async () => {
       const entry = await enqueue(text);
-      rows.set(entry.id, slot);
+      markers.set(entry.id, node);
       await requestFlush();
     })();
   }
 
-  // Repaint a marker's row in place, leaving the line being typed untouched.
-  // Returns false if the row is gone (scrolled off, or wiped by a reopen), so
-  // the caller can fall back to printing fresh.
-  function repaint(row: number, text: string): boolean {
-    const buf = term.buffer.active;
-    const rowsUp = buf.baseY + buf.cursorY - row;
-    if (row < 0 || row < buf.baseY || rowsUp <= 0) return false;
-    // save cursor · up to the row · col 0 · wipe it · text · restore cursor.
-    term.write(`\x1b7\x1b[${rowsUp}A\r\x1b[2K${text}\x1b8`);
+  // Repaint a marker's node in place, leaving the input untouched.
+  // Returns false if the node is gone (removed by a /clear), so the caller can fall back to printing fresh.
+  function repaint(node: HTMLElement, text: string): boolean {
+    if (!node.isConnected) return false;
+    term.restyle(node, text);
     return true;
   }
 
-  // Print a COPY notice as a new line above the prompt, then put the symbiot's in-progress line back.
+  // Print a notice as a new line above the input.
   // For deliveries whose marker no longer exists — most often lines that were queued,
-  // the app closed, and the worker delivered them after a reopen onto a blank screen.
+  // the app closed, and the worker delivered them after a reopen onto a fresh log.
   function printFresh(text: string): void {
-    term.write("\r\x1b[2K"); // wipe the current prompt+input line
-    // Any embedded newline becomes CRLF: xterm's bare \n line-feeds without returning to
-    // column 0, so a multi-line answer would staircase rightward — each line starting where
-    // the last ended. \r\n resets the column, landing continuation lines flush-left.
-    term.write(`${text.replace(/\r?\n/g, "\r\n")}\r\n`); // the notice
-    hooks.redrawInput(); // prompt + whatever was being typed
+    term.writeLine(text);
   }
 
   function applyVerdict(data: unknown): void {
     if (!isVerdict(data)) return;
     if (data.type === "delivered") {
       // Repaint each marker still on screen in place.
-      // Tally the ones whose marker is gone (reload/reopen, or scrolled off)
-      // and announce them with a single fresh summary —
+      // Tally the ones whose node is gone (a /clear) and announce them with a single fresh summary —
       // so a drained queue of N lines reads as one notice, not N identical ones.
       let gone = 0;
       for (const id of data.ids) {
-        const slot = rows.get(id);
-        if (!slot || !repaint(slot.row, COPY)) gone++;
-        rows.delete(id);
+        const node = markers.get(id);
+        if (!node || !repaint(node, COPY)) gone++;
+        markers.delete(id);
       }
       if (gone > 0) printFresh(copyFresh(gone));
       // The line is now durably in-flight; watch for its answer while the symbiot is here.
       startAnswerPoll();
     } else {
-      // Requeued: show each waiting again if its marker is still on screen.
+      // Requeued: show each waiting again if its node is still on screen.
       // If it's gone, there's nothing to show now — it stays in the outbox,
       // and a later delivery prints fresh.
       for (const id of data.ids) {
-        const slot = rows.get(id);
-        if (slot) repaint(slot.row, QUEUED);
+        const node = markers.get(id);
+        if (node) repaint(node, QUEUED);
       }
     }
   }
