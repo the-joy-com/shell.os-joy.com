@@ -259,6 +259,16 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+// Surface unsolicited inbound (a fired reminder, an enrichment follow-up) live while the tab is open —
+// the kernel raises these on its own, so nothing local signals their arrival the way an in-flight reply does.
+// A gentle background poll is the second channel beside the push nudge (which needs a subscription and may be off),
+// so staying on the page shows them within a beat rather than only on reload, refocus, or reconnect.
+// Only while visible, so a backgrounded tab never churns; open, refocus, and reconnect already flush on their own.
+const INBOX_POLL_MS = 15_000;
+setInterval(() => {
+  if (document.visibilityState === "visible") capture.flushInbox();
+}, INBOX_POLL_MS);
+
 // The best command the current input is a prefix of — the part still untyped.
 // Empty unless the line is a lone "/verb" fragment that uniquely extends one.
 function ghostFor(input: string): string {
