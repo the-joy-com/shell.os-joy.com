@@ -264,7 +264,7 @@ document.addEventListener("visibilitychange", () => {
 // A gentle background poll is the second channel beside the push nudge (which needs a subscription and may be off),
 // so staying on the page shows them within a beat rather than only on reload, refocus, or reconnect.
 // Only while visible, so a backgrounded tab never churns; open, refocus, and reconnect already flush on their own.
-const INBOX_POLL_MS = 15_000;
+const INBOX_POLL_MS = 10_000;
 setInterval(() => {
   if (document.visibilityState === "visible") capture.flushInbox();
 }, INBOX_POLL_MS);
