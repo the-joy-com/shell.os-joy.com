@@ -1,5 +1,6 @@
 import type { Term } from "./term";
 import { VERSION } from "./banner";
+import { getToken } from "./session";
 
 // A command is a verb typed at the prompt.
 // Most carry a `run` that writes their own output to the terminal.
@@ -11,7 +12,18 @@ export interface Command {
   summary: string;
   // Bare keywords are typed without a leading slash (e.g. `reset`).
   bare?: boolean;
+  // Advertised only to a symbiot with a session — hidden from /help and autocomplete for a visitor.
+  // The command acts on something that belongs to a particular symbiot (e.g. its timezone),
+  // so there's nothing to offer a caller the kernel can't name; the flow itself refuses without a session too.
+  authedOnly?: boolean;
   run?: (term: Term, args: string[]) => void;
+}
+
+// Whether an authed-only command should surface right now — the local read of "is there a session".
+// The kernel is the real authority on a session's life, so this is only about what to *advertise*:
+// the command still runs (and is refused server-side) if a visitor types it in full.
+export function isVisible(cmd: Command): boolean {
+  return !cmd.authedOnly || getToken() !== null;
 }
 
 // Deliberately lenient:
@@ -49,6 +61,8 @@ export const COMMANDS: Command[] = [
       writeLine(term);
       writeLine(term, "commands:");
       for (const cmd of COMMANDS) {
+        // Authed-only verbs stay off the list until there's a session — a visitor isn't shown what it can't use.
+        if (!isVisible(cmd)) continue;
         const label = cmd.bare ? cmd.name : `/${cmd.name}`;
         writeLine(term, `  ${label.padEnd(8)} ${cmd.summary}`);
       }
@@ -62,6 +76,8 @@ export const COMMANDS: Command[] = [
   // Carries no run either — dispatched to its async flow by main.ts, like the identity verbs.
   { name: "notify", summary: "get a nudge when The Joy answers" },
   { name: "status", summary: "show connection + session state" },
+  // Modal and authed-only — dispatched to its flow by main.ts, and hidden from a visitor (see isVisible).
+  { name: "timezone", summary: "tell The Joy where you are, so it keeps your local time", authedOnly: true },
 ];
 
 export function findCommand(name: string): Command | undefined {

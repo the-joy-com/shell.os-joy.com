@@ -39,6 +39,9 @@ export const KERNEL_MSG = {
   loggedIn: "logged in", // POST /login/verify — the code was good
   loggedOut: "out", // POST /logout — signing off; session revoked
   notAuthed: "not authenticated", // GET /status — no live session
+  // timezone
+  timezoneSet: "time hack", // POST /timezone — place placed; IANA zone in data.timezone
+  timezoneUnclear: "say again", // POST /timezone — couldn't resolve; nothing stored
   // push
   pushKey: "push key", // GET /push/key — the public app-server key
   subscribed: "subscribed", // POST /push/subscribe — channel registered

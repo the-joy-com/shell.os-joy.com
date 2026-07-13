@@ -10,11 +10,12 @@ import {
   VERSION,
 } from "./banner";
 import { createCapture } from "./capture";
-import { COMMANDS, findCommand, writeLine } from "./commands";
+import { COMMANDS, findCommand, isVisible, writeLine } from "./commands";
 import { type Envelope, isOk, KERNEL_MSG } from "./kernel";
 import { runNotify } from "./notify";
 import { registerServiceWorker } from "./pwa";
 import { createTerminal } from "./term";
+import { runTimezone } from "./zone";
 
 const PROMPT = "joy \x1b[32m❯\x1b[0m "; // green chevron
 
@@ -191,6 +192,13 @@ function handle(raw: string): void {
     return;
   }
 
+  // /timezone is the same shape: read where you are, tell the kernel, refocus when it settles.
+  // Modal and authed-only, so its flow reads the location line and refuses without a session.
+  if (verb === "timezone") {
+    void runTimezone(KERNEL_URL, io).finally(() => term.focus());
+    return;
+  }
+
   const cmd = findCommand(verb);
   if (!cmd || !cmd.run) {
     writeLine(term, `unknown command: /${verb} — try /help`);
@@ -257,6 +265,7 @@ function ghostFor(input: string): string {
   if (!input.startsWith("/") || input.includes(" ")) return "";
   const typed = input.slice(1);
   if (typed === "") return "";
-  const match = COMMANDS.find((c) => c.name.startsWith(typed) && c.name !== typed);
+  // Don't complete toward a command a visitor can't see — the same "not advertised" line /help holds.
+  const match = COMMANDS.find((c) => c.name.startsWith(typed) && c.name !== typed && isVisible(c));
   return match ? match.name.slice(typed.length) : "";
 }
