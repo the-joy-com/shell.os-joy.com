@@ -98,6 +98,10 @@ export interface Term {
   // given the current line, return the tail to show dim to the right (empty for none).
   // Owned by the app: it knows the verbs.
   setGhost(fn: (line: string) => string): void;
+  // Whether the current line sends on Enter rather than taking a line break —
+  // true for a command (a slash verb, a bare keyword), false for prose that submits via the send control.
+  // Owned by the app for the same reason as the ghost: only it knows what a command is.
+  setSendsOnEnter(fn: (line: string) => boolean): void;
   // Put focus back on the input (used after a modal flow settles).
   focus(): void;
 }
@@ -141,6 +145,8 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   let onLineCb: ((line: string) => void) | null = null;
   let onInterruptCb: (() => void) | null = null;
   let ghostFor: (line: string) => string = () => "";
+  // Default until the app wires its own: the slash convention alone, so a terminal used bare still sends commands.
+  let sendsOnEnter: (line: string) => boolean = (line) => line.startsWith("/");
   // The last message the symbiot clicked — its "you were here" landmark in the wall of text.
   // At most one at a time; clicking another moves it. Cleared when the log is wiped.
   let anchored: HTMLElement | null = null;
@@ -446,9 +452,10 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
         e.preventDefault();
         acceptGhost();
       }
-    } else if (e.key === "Enter" && getLine().startsWith("/")) {
-      // A slash command sends on Enter — the same startsWith("/") the dispatcher gates a command on,
-      // so Enter sends exactly what would be run as a command and nothing that would be read as content.
+    } else if (e.key === "Enter" && sendsOnEnter(getLine())) {
+      // A command sends on Enter, so it needn't reach for the send control the way a thought does.
+      // What counts as a command is the app's to know (a slash verb, a bare keyword like `reset`) —
+      // the terminal only asks, through the predicate the app injects (setSendsOnEnter).
       e.preventDefault();
       commit();
     } else if (e.ctrlKey && (e.key === "c" || e.key === "C")) {
@@ -506,6 +513,7 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     },
     checklist,
     setGhost: (fn) => (ghostFor = fn),
+    setSendsOnEnter: (fn) => (sendsOnEnter = fn),
     focus: () => editable.focus(),
   };
 }

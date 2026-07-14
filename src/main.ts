@@ -261,6 +261,7 @@ const capture = createCapture(term, { kernelUrl: KERNEL_URL });
 term.onLine(handle);
 term.onInterrupt(() => {});
 term.setGhost(ghostFor);
+term.setSendsOnEnter(isCommand);
 
 // The worker reports back here:
 // a queued line's delivery fate (→ the markers),
@@ -316,6 +317,14 @@ const INBOX_POLL_MS = 10_000;
 setInterval(() => {
   if (document.visibilityState === "visible") capture.flushInbox();
 }, INBOX_POLL_MS);
+
+// Whether a line is a command the terminal should send on Enter rather than break —
+// the same two tests handle() dispatches a command on: a bare keyword (e.g. `reset`), or a slash verb.
+// Prose is neither, so it keeps Enter for line breaks and submits through the send control.
+function isCommand(raw: string): boolean {
+  const input = raw.trim();
+  return findCommand(input)?.bare === true || input.startsWith("/");
+}
 
 // The best command the current input is a prefix of — the part still untyped.
 // Empty unless the line is a lone "/verb" fragment that uniquely extends one.
