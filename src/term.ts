@@ -83,6 +83,17 @@ export interface Term {
   // or null if it's abandoned with Ctrl-C.
   // The identity flows lean on this to read the email and then the code.
   readLine(prompt: string): Promise<string | null>;
+  // Modal multi-select: draw an interactive checklist in the log,
+  // and let the symbiot move the cursor with ↑/↓, tick or untick the row under it with space,
+  // and settle with Enter — resolving with the final checked-state keyed the way it came in,
+  // or null if abandoned (Esc / Ctrl-C).
+  // Rows and a save/cancel pair are tappable too, so a touch device with no space bar still works.
+  // Like readLine it owns the keyboard for its duration; the input line steps aside and returns after.
+  // /notifications leans on this to pick which channels The Joy may reach on.
+  checklist(opts: {
+    title?: string;
+    items: Array<{ key: string; label: string; checked: boolean }>;
+  }): Promise<Record<string, boolean> | null>;
   // The inline suggestion provider —
   // given the current line, return the tail to show dim to the right (empty for none).
   // Owned by the app: it knows the verbs.
@@ -231,6 +242,164 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     }
   }
 
+  // A modal checklist: the read-a-line sibling for the times the answer is a set of on/off choices,
+  // rather than typed text (today, which channels /notifications may reach on).
+  // It renders the choices as lines in the log — a cursor, a [x]/[ ] box, the label, the on/off word —
+  // and takes the keyboard for its duration the way readLine does,
+  // then hands the input line back and resolves.
+  //
+  // Two ways in, so neither a keyboard nor a touch screen is left out:
+  // ↑/↓ move the cursor and space acts on the row under it, or a tap acts on a row directly.
+  // The cursor walks the channel rows and then the save / cancel buttons, one navigable strip —
+  // on a channel row space toggles it, on a button space activates it.
+  // Enter settles (saving, unless the cursor is resting on cancel), Esc / Ctrl-C abandons.
+  // The block is left frozen in the log as a record of what was chosen.
+  function checklist(opts: {
+    title?: string;
+    items: Array<{ key: string; label: string; checked: boolean }>;
+  }): Promise<Record<string, boolean> | null> {
+    const { items } = opts;
+    const checked: Record<string, boolean> = {};
+    for (const it of items) checked[it.key] = it.checked;
+    let cursor = 0;
+
+    // The input line steps aside and loses its focus,
+    // so a stray keystroke can't leak into it while the checklist owns the keyboard
+    // (a hidden-but-focused editable would still catch Enter).
+    inputLine.style.display = "none";
+    editable.blur();
+
+    if (opts.title) writeLine(`\x1b[2m${opts.title}\x1b[0m`);
+    const width = Math.max(...items.map((it) => it.label.length), 0);
+
+    // One row's text at its current state.
+    // The label is padded before any colour so the on/off column lines up;
+    // the cursor row alone is marked and bolded, and a settled block (cursor gone) reads plain.
+    const rowText = (i: number): string => {
+      const it = items[i];
+      const cur = i === cursor;
+      const marker = cur ? "\x1b[92m❯\x1b[0m" : " ";
+      const box = checked[it.key] ? "\x1b[92m[x]\x1b[0m" : "[ ]";
+      const label = cur ? `\x1b[1m${it.label.padEnd(width)}\x1b[0m` : it.label.padEnd(width);
+      const state = checked[it.key] ? "\x1b[92mon\x1b[0m" : "\x1b[2moff\x1b[0m";
+      return `${marker} ${box} ${label}  ${state}`;
+    };
+
+    // The cursor walks one strip: the channel rows first, then save, then cancel.
+    // So two positions past the last item name the buttons.
+    const saveRow = items.length;
+    const cancelRow = items.length + 1;
+    const total = items.length + 2;
+
+    return new Promise((resolve) => {
+      const itemNodes = items.map((_, i) => writeLine(rowText(i)));
+
+      // Tapping a row toggles it and moves the cursor there — a touch device has no space bar.
+      itemNodes.forEach((node, i) => {
+        node.classList.add("choice");
+        node.addEventListener("click", (e) => {
+          e.stopPropagation();
+          cursor = i;
+          checked[items[i].key] = !checked[items[i].key];
+          repaint();
+        });
+      });
+
+      // A save / cancel pair, tappable for pointers and reachable by the cursor for the keyboard.
+      // Built once with their own spans (their click handlers must survive repaints),
+      // so the focus state is painted by mutating them in place rather than rebuilding them,
+      // and they're left in the log frozen alongside the rows.
+      const controls = writeLine();
+      const saveBtn = document.createElement("span");
+      saveBtn.className = "choice bgreen";
+      const cancelBtn = document.createElement("span");
+      cancelBtn.className = "choice dim";
+      controls.append(saveBtn, cancelBtn);
+
+      // The focused button carries the same ❯ the rows use and goes bold;
+      // a 2-space slot holds the marker's place so nothing shifts as focus moves,
+      // and cancel sheds its dim while focused so the highlight reads clearly.
+      // With the cursor cleared (the settled block), neither is focused and both read plain.
+      const paintButtons = (): void => {
+        const onSave = cursor === saveRow;
+        const onCancel = cursor === cancelRow;
+        saveBtn.textContent = `${onSave ? "❯ " : "  "}[ save ]`;
+        saveBtn.classList.toggle("b", onSave);
+        cancelBtn.textContent = `${onCancel ? "  ❯ " : "    "}[ cancel ]`;
+        cancelBtn.classList.toggle("b", onCancel);
+        cancelBtn.classList.toggle("dim", !onCancel);
+      };
+
+      const repaint = (): void => {
+        itemNodes.forEach((node, i) => restyle(node, rowText(i)));
+        paintButtons();
+      };
+      paintButtons(); // set the resting text before the first keystroke
+
+      writeLine("\x1b[2m↑/↓ move · space toggles · enter saves · esc cancels\x1b[0m");
+
+      const settle = (result: Record<string, boolean> | null): void => {
+        window.removeEventListener("keydown", onKey, true);
+        cursor = -1; // clear the highlight so the frozen block reads as a plain record
+        repaint();
+        inputLine.style.display = "";
+        editable.focus();
+        resolve(result);
+      };
+
+      // Handled in the capture phase so the choice keys never reach anything below,
+      // and with the arrows and space prevented from scrolling the page under the terminal.
+      const onKey = (e: KeyboardEvent): void => {
+        if (e.key === "ArrowDown" || e.key === "j") {
+          cursor = (cursor + 1) % total;
+          repaint();
+        } else if (e.key === "ArrowUp" || e.key === "k") {
+          cursor = (cursor - 1 + total) % total;
+          repaint();
+        } else if (e.key === "ArrowRight" || e.key === "l") {
+          // save and cancel sit side by side, so ←/→ step between them when the cursor is on that row.
+          if (cursor === saveRow) {
+            cursor = cancelRow;
+            repaint();
+          } else return;
+        } else if (e.key === "ArrowLeft" || e.key === "h") {
+          if (cursor === cancelRow) {
+            cursor = saveRow;
+            repaint();
+          } else return;
+        } else if (e.key === " " || e.key === "x") {
+          // Space acts on the row under the cursor: a channel toggles, a button fires.
+          if (cursor === saveRow) settle({ ...checked });
+          else if (cursor === cancelRow) settle(null);
+          else {
+            checked[items[cursor].key] = !checked[items[cursor].key];
+            repaint();
+          }
+        } else if (e.key === "Enter") {
+          // Enter settles — saving, unless the cursor is resting on cancel.
+          settle(cursor === cancelRow ? null : { ...checked });
+        } else if (e.key === "Escape" || (e.ctrlKey && (e.key === "c" || e.key === "C"))) {
+          settle(null);
+        } else {
+          return; // an unhandled key falls through untouched
+        }
+        e.preventDefault();
+        e.stopPropagation();
+      };
+
+      saveBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        settle({ ...checked });
+      });
+      cancelBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        settle(null);
+      });
+
+      window.addEventListener("keydown", onKey, true);
+    });
+  }
+
   // Enter is caught two ways on purpose:
   // keydown for a physical keyboard,
   // and beforeinput's insert-paragraph/line-break for soft keyboards that don't emit a reliable Enter keydown.
@@ -289,6 +458,7 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
       editable.focus();
       return new Promise((resolve) => (pending = resolve));
     },
+    checklist,
     setGhost: (fn) => (ghostFor = fn),
     focus: () => editable.focus(),
   };

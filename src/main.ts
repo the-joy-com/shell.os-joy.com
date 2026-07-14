@@ -12,7 +12,9 @@ import {
 import { createCapture } from "./capture";
 import { COMMANDS, findCommand, isVisible, writeLine } from "./commands";
 import { type Envelope, isOk, KERNEL_MSG } from "./kernel";
-import { runNotify } from "./notify";
+import { ensurePushOnLogin, runNotify } from "./notify";
+import { runNotifications } from "./notifications";
+import { runModels } from "./models";
 import { registerServiceWorker } from "./pwa";
 import { createTerminal } from "./term";
 import { runTimezone } from "./zone";
@@ -73,8 +75,10 @@ async function probeKernel(): Promise<void> {
   }
 }
 
-// Probe now, on a gentle interval, and immediately whenever connectivity or visibility changes —
-// so the dot is correct from first frame and snaps back the moment the network returns or a backgrounded tab refocuses.
+// Probe now, on a gentle interval,
+// and immediately whenever connectivity or visibility changes —
+// so the dot is correct from first frame
+// and snaps back the moment the network returns or a backgrounded tab refocuses.
 probeKernel();
 setInterval(probeKernel, PROBE_INTERVAL_MS);
 window.addEventListener("online", probeKernel);
@@ -83,7 +87,8 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") probeKernel();
 });
 
-// The terminal — plain DOM, no emulator. It owns the scrolling log and the input line;
+// The terminal — plain DOM, no emulator.
+// It owns the scrolling log and the input line;
 // this file owns what a line means. See term.ts for why xterm is gone.
 const term = createTerminal(document.getElementById("terminal")!, { prompt: PROMPT });
 
@@ -93,10 +98,12 @@ const term = createTerminal(document.getElementById("terminal")!, { prompt: PROM
 // the wide one-liner, else the stacked two words a phone can hold, else a plain wordmark.
 // Two things make this reliable where a width estimate wasn't.
 // First, we wait for document.fonts.ready before measuring,
-// because the block and box-drawing glyphs can resolve to a fallback font that lands late and wider than the primary —
+// because the block and box-drawing glyphs can resolve to a fallback font
+// that lands late and wider than the primary —
 // measure before that and a too-wide cut looks like it fits,
 // then clips once the real font paints.
-// Second, we test the cut against the rows we just painted (scrollWidth past the box means the line is being clipped),
+// Second, we test the cut against the rows we just painted
+// (scrollWidth past the box means the line is being clipped),
 // not against a separate probe that might disagree with what actually rendered;
 // a cut that overflows by any amount is torn down and the next narrower one tried.
 // The rows carry a class that forbids wrapping,
@@ -133,19 +140,23 @@ async function drawBanner(): Promise<void> {
 }
 void drawBanner();
 
-// Make the shell installable and offline-capable. Last, and off to the side — it must never delay or break the terminal that just drew above.
+// Make the shell installable and offline-capable.
+// Last, and off to the side — it must never delay or break the terminal that just drew above.
 registerServiceWorker();
 
 // --- dispatch -------------------------------------------------------------
 
 // The identity verbs run as modal async flows (see the auth-verb branch in handle),
-// not one-shot cmd.run handlers, because they read the email and the code on the lines that follow.
+// not one-shot cmd.run handlers,
+// because they read the email and the code on the lines that follow.
 const AUTH_VERBS = new Set(["login", "logout", "status"]);
 
-// The narrow surface the auth flows get on the terminal: read the next line, print a line.
+// The narrow surface the auth flows get on the terminal:
+// read the next line, print a line.
 const io: AuthIo = {
   readLine: (prompt) => term.readLine(prompt),
   print: (text) => writeLine(term, text),
+  checklist: (opts) => term.checklist(opts),
 };
 
 function handle(raw: string): void {
@@ -174,14 +185,22 @@ function handle(raw: string): void {
   const [verb, ...args] = input.slice(1).split(/\s+/);
 
   // Identity verbs own the screen for a modal exchange (email, then code),
-  // so they run as their own async flow; focus returns to the prompt once it settles.
+  // so they run as their own async flow;
+  // focus returns to the prompt once it settles.
   if (AUTH_VERBS.has(verb)) {
     // After the flow settles, discover any inbox waiting on a fresh session —
     // a no-op when the verb wasn't a login, or left us logged out.
-    void runAuth(verb, args, KERNEL_URL, io).finally(() => {
-      term.focus();
-      capture.flushInbox();
-    });
+    // And on a login specifically, make sure this browser is tied to the symbiot for push —
+    // silently adopting an existing subscription,
+    // or inviting one if there's none (ensurePushOnLogin),
+    // so the symbiot doesn't have to remember /notify to be reachable.
+    // Only after /login, and only if it took.
+    void runAuth(verb, args, KERNEL_URL, io)
+      .then(() => (verb === "login" ? ensurePushOnLogin(KERNEL_URL, io) : undefined))
+      .finally(() => {
+        term.focus();
+        capture.flushInbox();
+      });
     return;
   }
 
@@ -192,10 +211,30 @@ function handle(raw: string): void {
     return;
   }
 
-  // /timezone is the same shape: read where you are, tell the kernel, refocus when it settles.
+  // /timezone is the same shape:
+  // read where you are, tell the kernel, refocus when it settles.
   // Modal and authed-only, so its flow reads the location line and refuses without a session.
   if (verb === "timezone") {
     void runTimezone(KERNEL_URL, io).finally(() => term.focus());
+    return;
+  }
+
+  // /notifications is the same shape again:
+  // show the per-channel state, read one channel to flip,
+  // tell the kernel, refocus when it settles.
+  // Modal and authed-only, like /timezone.
+  if (verb === "notifications") {
+    void runNotifications(KERNEL_URL, io).finally(() => term.focus());
+    return;
+  }
+
+  // /models is the same shape once more:
+  // show the catalog and role assignments, read a change, tell the kernel,
+  // refocus when it settles.
+  // Modal and authed-only, like /timezone —
+  // box-level config, operator-gated.
+  if (verb === "models") {
+    void runModels(KERNEL_URL, io).finally(() => term.focus());
     return;
   }
 
@@ -212,11 +251,13 @@ function handle(raw: string): void {
 
 // The capture loop owns getting a typed line to the kernel and keeping its marker honest.
 // It draws each marker as a log line and repaints it in place by holding the line's node,
-// so it needs nothing from us but the kernel's address — the prompt is the terminal's own now.
+// so it needs nothing from us but the kernel's address —
+// the prompt is the terminal's own now.
 const capture = createCapture(term, { kernelUrl: KERNEL_URL });
 
 // Wire the terminal's raw events to the dispatcher and the ghost.
-// A bare Ctrl-C needs no handling — the terminal already dropped the line and the prompt persists.
+// A bare Ctrl-C needs no handling —
+// the terminal already dropped the line and the prompt persists.
 term.onLine(handle);
 term.onInterrupt(() => {});
 term.setGhost(ghostFor);
@@ -224,7 +265,8 @@ term.setGhost(ghostFor);
 // The worker reports back here:
 // a queued line's delivery fate (→ the markers),
 // an answer it received on a push (→ rendered as a fresh line, and stopped being awaited),
-// or a missive nudge (→ pull traffic waiting now, since the worker can't read the authed /inbox itself).
+// or a missive nudge (→ pull traffic waiting now,
+// since the worker can't read the authed /inbox itself).
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("message", (event) => {
     if (event.data?.type === "answer") capture.applyAnswer(event.data);
@@ -238,9 +280,11 @@ if ("serviceWorker" in navigator) {
 // and discover any unsolicited inbound the kernel raised for us on its own (needs a session).
 // All three again when the network returns;
 // the two reconciles also on refocus, since a message may have landed meanwhile.
-// (flushAnswers is the backbone of the reply channel — a push only surfaces one sooner.)
+// (flushAnswers is the backbone of the reply channel —
+// a push only surfaces one sooner.)
 // startAnswerPoll keeps that backbone running while a reply is still owed and the tab is watched,
-// so an answer lands live on the page without a push or a reload; it self-terminates when none is in flight.
+// so an answer lands live on the page without a push or a reload;
+// it self-terminates when none is in flight.
 capture.flushNow();
 capture.flushAnswers();
 capture.flushInbox();
@@ -260,10 +304,14 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // Surface unsolicited inbound (a fired reminder, an enrichment follow-up) live while the tab is open —
-// the kernel raises these on its own, so nothing local signals their arrival the way an in-flight reply does.
-// A gentle background poll is the second channel beside the push nudge (which needs a subscription and may be off),
-// so staying on the page shows them within a beat rather than only on reload, refocus, or reconnect.
-// Only while visible, so a backgrounded tab never churns; open, refocus, and reconnect already flush on their own.
+// the kernel raises these on its own,
+// so nothing local signals their arrival the way an in-flight reply does.
+// A gentle background poll is the second channel beside the push nudge
+// (which needs a subscription and may be off),
+// so staying on the page shows them within a beat
+// rather than only on reload, refocus, or reconnect.
+// Only while visible, so a backgrounded tab never churns;
+// open, refocus, and reconnect already flush on their own.
 const INBOX_POLL_MS = 10_000;
 setInterval(() => {
   if (document.visibilityState === "visible") capture.flushInbox();
@@ -275,7 +323,8 @@ function ghostFor(input: string): string {
   if (!input.startsWith("/") || input.includes(" ")) return "";
   const typed = input.slice(1);
   if (typed === "") return "";
-  // Don't complete toward a command a visitor can't see — the same "not advertised" line /help holds.
+  // Don't complete toward a command a visitor can't see —
+  // the same "not advertised" line /help holds.
   const match = COMMANDS.find((c) => c.name.startsWith(typed) && c.name !== typed && isVisible(c));
   return match ? match.name.slice(typed.length) : "";
 }

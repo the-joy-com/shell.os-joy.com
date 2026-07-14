@@ -39,6 +39,11 @@ export const KERNEL_MSG = {
   loggedIn: "logged in", // POST /login/verify — the code was good
   loggedOut: "out", // POST /logout — signing off; session revoked
   notAuthed: "not authenticated", // GET /status — no live session
+  // notifications
+  notifications: "notifications", // GET/POST /notifications — per-channel enable/disable state in data.channels
+  // models
+  models: "models", // GET /models and a successful POST — catalog, roles, assignable_roles in data
+  modelRefused: "that model change didn't take", // POST /models — refused; data.reason says why, state alongside
   // timezone
   timezoneSet: "time hack", // POST /timezone — place placed; IANA zone in data.timezone
   timezoneUnclear: "say again", // POST /timezone — couldn't resolve; nothing stored

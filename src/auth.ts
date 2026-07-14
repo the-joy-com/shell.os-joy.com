@@ -21,10 +21,17 @@ import { clearToken, getToken, setToken } from "./session";
 
 // What the flows are allowed to do to the terminal — nothing more.
 // readLine prompts and resolves with the next line entered, or null if the symbiot abandons it (Ctrl-C);
-// print writes a line above the prompt.
+// print writes a line above the prompt;
+// checklist runs a modal multi-select (space to toggle, Enter to save),
+// and resolves with the final per-key state, or null if abandoned —
+// /notifications uses it to pick channels (see term.ts).
 export interface AuthIo {
   readLine: (prompt: string) => Promise<string | null>;
   print: (text: string) => void;
+  checklist: (opts: {
+    title?: string;
+    items: Array<{ key: string; label: string; checked: boolean }>;
+  }) => Promise<Record<string, boolean> | null>;
 }
 
 // The data the identity routes carry back inside the envelope.

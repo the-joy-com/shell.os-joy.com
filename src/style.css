@@ -76,6 +76,13 @@ body {
   opacity: 0.35;
 }
 
+/* A checklist row or its save/cancel button — tappable,
+   so a touch device with no space bar can still tick a channel.
+   Keyboard users drive it with ↑/↓ and space; the pointer is the alternate. */
+.term-log .choice {
+  cursor: pointer;
+}
+
 /* The SGR colours the shell emits, turned into classes by term.ts. */
 #terminal .b {
   font-weight: 600;

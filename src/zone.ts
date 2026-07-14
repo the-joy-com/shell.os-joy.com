@@ -22,6 +22,24 @@ interface TimezoneData {
   timezone: string;
 }
 
+// The zone the kernel currently has stored for this symbiot, or null when it can't be read.
+// A silent best-effort GET: a failure just means the command opens without showing a current value,
+// never that it breaks — the write path below is the point of the command.
+async function readCurrentZone(kernelUrl: string, token: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${kernelUrl}/timezone`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const body: Envelope | null = await res.json().catch(() => null);
+    const tz = (body?.data as TimezoneData | null)?.timezone;
+    return typeof tz === "string" ? tz : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function runTimezone(kernelUrl: string, io: AuthIo): Promise<void> {
   // Not advertised to visitors, and refused for one who types it anyway —
   // the kernel would turn it away regardless, so we spare the round trip and say why plainly.
@@ -31,10 +49,19 @@ export async function runTimezone(kernelUrl: string, io: AuthIo): Promise<void> 
     return;
   }
 
-  const entered = await io.readLine("where are you? (a city or country) ");
+  // Open on the zone already set, so the command shows the current value rather than prompting into the void.
+  // A failed read is silent — we simply prompt without the preamble; the write below is what matters.
+  const current = await readCurrentZone(kernelUrl, token);
+  if (current) io.print(dim(`your local time is currently ${current}.`));
+
+  const entered = await io.readLine(
+    current
+      ? "where are you now? (a city or country — or leave blank to keep it) "
+      : "where are you? (a city or country) ",
+  );
   if (entered === null) return; // abandoned (Ctrl-C)
   const location = entered.trim();
-  if (!location) return;
+  if (!location) return; // blank — keep the zone as it is
 
   let reached = false;
   let body: Envelope | null = null;

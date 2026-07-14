@@ -12,15 +12,19 @@ export interface Command {
   summary: string;
   // Bare keywords are typed without a leading slash (e.g. `reset`).
   bare?: boolean;
-  // Advertised only to a symbiot with a session — hidden from /help and autocomplete for a visitor.
+  // Advertised only to a symbiot with a session —
+  // hidden from /help and autocomplete for a visitor.
   // The command acts on something that belongs to a particular symbiot (e.g. its timezone),
-  // so there's nothing to offer a caller the kernel can't name; the flow itself refuses without a session too.
+  // so there's nothing to offer a caller the kernel can't name;
+  // the flow itself refuses without a session too.
   authedOnly?: boolean;
   run?: (term: Term, args: string[]) => void;
 }
 
-// Whether an authed-only command should surface right now — the local read of "is there a session".
-// The kernel is the real authority on a session's life, so this is only about what to *advertise*:
+// Whether an authed-only command should surface right now —
+// the local read of "is there a session".
+// The kernel is the real authority on a session's life,
+// so this is only about what to *advertise*:
 // the command still runs (and is refused server-side) if a visitor types it in full.
 export function isVisible(cmd: Command): boolean {
   return !cmd.authedOnly || getToken() !== null;
@@ -61,7 +65,8 @@ export const COMMANDS: Command[] = [
       writeLine(term);
       writeLine(term, "commands:");
       for (const cmd of COMMANDS) {
-        // Authed-only verbs stay off the list until there's a session — a visitor isn't shown what it can't use.
+        // Authed-only verbs stay off the list until there's a session —
+        // a visitor isn't shown what it can't use.
         if (!isVisible(cmd)) continue;
         const label = cmd.bare ? cmd.name : `/${cmd.name}`;
         writeLine(term, `  ${label.padEnd(8)} ${cmd.summary}`);
@@ -70,13 +75,29 @@ export const COMMANDS: Command[] = [
   },
   { name: "clear", summary: "wipe the screen", run: clearScreen },
   { name: "reset", summary: "clear the screen (no slash)", bare: true, run: clearScreen },
-  // Identity verbs carry no run — they're modal, dispatched to the auth flow by main.ts.
+  // Identity verbs carry no run —
+  // they're modal, dispatched to the auth flow by main.ts.
   { name: "login", summary: "sign in with an email code" },
   { name: "logout", summary: "end the session" },
-  // Carries no run either — dispatched to its async flow by main.ts, like the identity verbs.
+  // Carries no run either —
+  // dispatched to its async flow by main.ts, like the identity verbs.
   { name: "notify", summary: "get a nudge when The Joy answers" },
+  // Modal and authed-only —
+  // dispatched to its flow by main.ts, and hidden from a visitor (see isVisible).
+  // Distinct from /notify (which registers this browser for push):
+  // this chooses which channels The Joy may reach you on at all,
+  // a standing preference tied to your identity —
+  // so, like /timezone, authed-only.
+  { name: "notifications", summary: "choose which channels The Joy may reach you on", authedOnly: true },
+  // Modal and authed-only —
+  // dispatched to its flow by main.ts, and hidden from a visitor (see isVisible).
+  // Box-level configuration (which models the kernel runs, and which does which job),
+  // but still authed: only the operator, logged in, should see or shape it —
+  // so, like /timezone, authed-only.
+  { name: "models", summary: "choose which models The Joy runs, and which does which job", authedOnly: true },
   { name: "status", summary: "show connection + session state" },
-  // Modal and authed-only — dispatched to its flow by main.ts, and hidden from a visitor (see isVisible).
+  // Modal and authed-only —
+  // dispatched to its flow by main.ts, and hidden from a visitor (see isVisible).
   { name: "timezone", summary: "tell The Joy where you are, so it keeps your local time", authedOnly: true },
 ];
 
@@ -84,7 +105,8 @@ export function findCommand(name: string): Command | undefined {
   return COMMANDS.find((c) => c.name === name);
 }
 
-// A thin pass-through kept so callers read as "write a line" rather than reaching into the terminal.
+// A thin pass-through kept so callers read as "write a line"
+// rather than reaching into the terminal.
 // The terminal appends the line to the log and colours any ANSI it carries.
 export function writeLine(term: Term, text = ""): void {
   term.writeLine(text);
