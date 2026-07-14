@@ -72,6 +72,22 @@ body {
   border-radius: 2px;
 }
 
+/* Your own submitted lines, echoed back into the log, read dimmer than The Joy's replies.
+   What you typed recedes so the answers coming back — the thing you actually re-read — stand out at full brightness,
+   with no second colour and no chat chrome: just the terminal's own dim register (the 0.5 of SGR `\x1b[2m`),
+   set against Joy's lines, which are left bare at the base brightness.
+   Opacity only, never the text itself, so the log still selects and pastes as clean plain text —
+   the mirrored `joy ❯` / `❮ joy` sigils carry who-said-what into the copy. */
+.term-log .line.you {
+  opacity: 0.5;
+}
+
+/* …except the one line marked as the landmark: a deliberate click brings it back to full,
+   so the "you were here" highlight reads clearly instead of being halved along with the dim. */
+.term-log .line.you.here {
+  opacity: 1;
+}
+
 /* Banner rows are the exception: ASCII art that wraps turns to mush, so it must never wrap.
    main.ts only ever draws a cut it measured to fit, so this line sits within the box;
    the rule is the guarantee that a marginal miss clips rather than folds. */

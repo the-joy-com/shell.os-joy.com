@@ -200,7 +200,9 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   // the same record xterm kept by echoing inline as you typed.
   function echo(line: string, suffix = ""): void {
     const node = document.createElement("div");
-    node.className = "line";
+    // `you` marks the line as the symbiot's own, so it reads dimmer than The Joy's replies (see style.css):
+    // what you typed recedes, the answer coming back stands out. Joy's lines go through writeLine and stay bare.
+    node.className = "line you";
     appendStyled(node, currentPrompt);
     node.appendChild(document.createTextNode(line + suffix));
     log.appendChild(node);
