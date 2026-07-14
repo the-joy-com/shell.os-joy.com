@@ -51,6 +51,27 @@ body {
   min-height: 1.3em;
 }
 
+/* Every message line is clickable — a click marks it as the landmark — so the pointer says so on hover.
+   A blank furniture row (`:empty`: a spacer the log wrote with no content) isn't markable,
+   so it keeps the default cursor and never poses as a target. */
+.term-log .line:not(:empty) {
+  cursor: pointer;
+}
+
+/* The last-clicked line: the "you were here" landmark for finding your place in the wall of text.
+   A green gutter bar plus a faint wash of the same green —
+   bright enough to catch the eye on a scroll-back, quiet enough not to shout over the reply itself.
+   The bar rides in the gutter (padding-left cancelled by an equal negative margin),
+   so marking a line never nudges its text sideways;
+   box-shadow and background don't affect layout, so nothing else shifts. */
+.term-log .line.here {
+  background: rgba(110, 231, 168, 0.08);
+  box-shadow: inset 2px 0 0 #6ee7a8;
+  padding-left: 6px;
+  margin-left: -6px;
+  border-radius: 2px;
+}
+
 /* Banner rows are the exception: ASCII art that wraps turns to mush, so it must never wrap.
    main.ts only ever draws a cut it measured to fit, so this line sits within the box;
    the rule is the guarantee that a marginal miss clips rather than folds. */

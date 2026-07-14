@@ -132,6 +132,9 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   let onLineCb: ((line: string) => void) | null = null;
   let onInterruptCb: (() => void) | null = null;
   let ghostFor: (line: string) => string = () => "";
+  // The last message the symbiot clicked — its "you were here" landmark in the wall of text.
+  // At most one at a time; clicking another moves it. Cleared when the log is wiped.
+  let anchored: HTMLElement | null = null;
 
   // --- rendering -----------------------------------------------------------
 
@@ -157,6 +160,16 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
 
   function clear(): void {
     log.textContent = "";
+    anchored = null; // the landmark's node is gone with the log — forget it, don't dangle
+  }
+
+  // Mark a log line as the last-clicked landmark, moving the highlight off whatever held it.
+  // A no-op if that same line already holds it, so a second tap doesn't flicker.
+  function setAnchor(node: HTMLElement): void {
+    if (anchored === node) return;
+    anchored?.classList.remove("here");
+    node.classList.add("here");
+    anchored = node;
   }
 
   function setPrompt(raw: string): void {
@@ -437,10 +450,18 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   // so a phone opens its keyboard on a tap —
   // unless text is being selected (leave a selection alone),
   // or the tap landed inside the input already (respect where the caret was placed).
+  //
+  // A tap that lands on a message line also anchors it as the landmark (see setAnchor):
+  // the two compose, so the same tap both opens the keyboard and marks where you were.
+  // A drag-select bails at the guard above, so highlighting text to copy never moves the landmark;
+  // a blank furniture row (a spacer, a bare marker) carries no text, so it can't become one either.
   container.addEventListener("click", (e) => {
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
     if (e.target instanceof Node && editable.contains(e.target)) return;
+    const el = e.target instanceof Element ? e.target : (e.target as Node | null)?.parentElement;
+    const line = el?.closest<HTMLElement>(".line");
+    if (line && log.contains(line) && (line.textContent ?? "").trim() !== "") setAnchor(line);
     editable.focus();
     setCaretEnd();
   });
