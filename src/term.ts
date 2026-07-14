@@ -75,7 +75,7 @@ export interface Term {
   restyle(node: HTMLElement, text: string): void;
   // Wipe the log (both /clear and the bare `reset`).
   clear(): void;
-  // Fires when Enter is pressed on a normal line (not during a modal readLine).
+  // Fires when a normal line is sent (not during a modal readLine).
   onLine(fn: (line: string) => void): void;
   // Fires on Ctrl-C on a normal line.
   onInterrupt(fn: () => void): void;
@@ -120,7 +120,16 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   editable.setAttribute("autocorrect", "off");
   const ghostSpan = document.createElement("span");
   ghostSpan.className = "ghost";
-  inputLine.append(promptSpan, editable, ghostSpan);
+  // The send control: submission moved here so Enter is free to make line breaks.
+  // Quiet furniture in the terminal's own vocabulary (the checklist's [ save ] lives in the same key),
+  // pinned to the right edge of the input line by CSS rather than by its place in this flow.
+  const sendBtn = document.createElement("span");
+  sendBtn.className = "term-send";
+  sendBtn.textContent = "send";
+  sendBtn.setAttribute("role", "button");
+  sendBtn.setAttribute("aria-label", "send");
+  sendBtn.hidden = true; // nothing to send on a blank line — the control appears once there's content
+  inputLine.append(promptSpan, editable, ghostSpan, sendBtn);
 
   container.append(log, inputLine);
 
@@ -194,7 +203,9 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
 
   // --- input ---------------------------------------------------------------
 
-  const getLine = (): string => (editable.textContent ?? "").replace(/\n/g, "");
+  // Newlines are content now (Enter inserts them), so they survive to the sent line;
+  // only a trailing run is shed at commit, so a stray Enter before send doesn't tack on a blank row.
+  const getLine = (): string => editable.textContent ?? "";
 
   function setCaretEnd(): void {
     const range = document.createRange();
@@ -214,8 +225,15 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     return editable.contains(range.endContainer) && range.endOffset === (range.endContainer.textContent?.length ?? 0);
   }
 
+  // The send control only shows when there's something to send:
+  // a blank line — empty, or only whitespace and newlines — has nothing to commit, so the affordance stays hidden.
+  function syncSend(): void {
+    sendBtn.hidden = getLine().trim() === "";
+  }
+
   function updateGhost(): void {
     ghostSpan.textContent = ghostFor(getLine());
+    syncSend();
   }
 
   function acceptGhost(): void {
@@ -227,7 +245,7 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   }
 
   function commit(): void {
-    const line = getLine();
+    const line = getLine().replace(/^\n+|\n+$/g, "");
     echo(line);
     editable.textContent = "";
     updateGhost();
@@ -413,16 +431,12 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     });
   }
 
-  // Enter is caught two ways on purpose:
-  // keydown for a physical keyboard,
-  // and beforeinput's insert-paragraph/line-break for soft keyboards that don't emit a reliable Enter keydown.
-  // keydown's preventDefault suppresses the beforeinput,
-  // so a normal desktop Return never commits twice.
+  // Enter no longer sends: it inserts a line break, so a multi-line thought can be shaped as it reads.
+  // The editable is plaintext-only, so the browser inserts the newline on its own —
+  // Enter is left unhandled here, and a desktop keydown and a soft keyboard's beforeinput both fall through to that default.
+  // Tab and ArrowRight still accept the ghost, Ctrl-C still abandons the line, and submission moved to the send control below.
   editable.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.isComposing) {
-      e.preventDefault();
-      commit();
-    } else if (e.key === "Tab") {
+    if (e.key === "Tab") {
       e.preventDefault();
       acceptGhost();
     } else if (e.key === "ArrowRight") {
@@ -438,13 +452,17 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
       }
     }
   });
-  editable.addEventListener("beforeinput", (e) => {
-    if (e.inputType === "insertParagraph" || e.inputType === "insertLineBreak") {
-      e.preventDefault();
-      commit();
-    }
-  });
   editable.addEventListener("input", updateGhost);
+
+  // Submission lives on the send control now that Enter makes line breaks.
+  // mousedown is swallowed so a tap never blurs the editable first, which keeps a phone's keyboard up across the send;
+  // the click commits the line and hands focus back for the next one.
+  sendBtn.addEventListener("mousedown", (e) => e.preventDefault());
+  sendBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    commit();
+    editable.focus();
+  });
 
   // Tapping anywhere in the terminal focuses the input and drops the caret at the end —
   // so a phone opens its keyboard on a tap —

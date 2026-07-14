@@ -79,10 +79,41 @@ body {
   white-space: pre;
 }
 
-/* The input line, flowing right after the log: prompt, then the editable, then the dim ghost. */
+/* The input line, flowing right after the log: prompt, then the editable, then the dim ghost.
+   It's the positioning context for the send control that rides its right edge,
+   and the right padding holds a lane open for that control so a long line wraps before it rather than running underneath. */
 .term-input {
+  position: relative;
+  padding-right: 5em;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* The send control: submission moved here so Enter is free to insert line breaks.
+   Quiet furniture in the terminal's own vocabulary — the brackets echo the checklist's [ save ] — dim at rest and full-strength on hover or press, so it reads as pressable without shouting.
+   It's pinned to the bottom-right of the input line and carries the background, so it stays legible over any text that reaches the lane the input's padding holds open. */
+.term-send {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  color: #6ee7a8;
+  background: var(--bg);
+  opacity: 0.5;
+  cursor: pointer;
+  user-select: none;
+}
+
+.term-send::before {
+  content: "[ ";
+}
+
+.term-send::after {
+  content: " ]";
+}
+
+.term-send:hover,
+.term-send:active {
+  opacity: 1;
 }
 
 /* A real contenteditable — the soft keyboard sees genuine text here, so
