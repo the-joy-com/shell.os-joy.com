@@ -431,10 +431,12 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     });
   }
 
-  // Enter no longer sends: it inserts a line break, so a multi-line thought can be shaped as it reads.
-  // The editable is plaintext-only, so the browser inserts the newline on its own —
-  // Enter is left unhandled here, and a desktop keydown and a soft keyboard's beforeinput both fall through to that default.
-  // Tab and ArrowRight still accept the ghost, Ctrl-C still abandons the line, and submission moved to the send control below.
+  // Enter no longer sends *content*: it inserts a line break, so a multi-line thought can be shaped as it reads.
+  // The one exception is a slash command — a single-line instruction to the shell, never prose —
+  // which Enter still sends, so a command needn't reach for the send control the way a thought does.
+  // The editable is plaintext-only, so for ordinary content the browser inserts the newline on its own —
+  // Enter is left unhandled below, and a desktop keydown and a soft keyboard's beforeinput both fall through to that default.
+  // Tab and ArrowRight still accept the ghost, Ctrl-C still abandons the line, and content submission moved to the send control below.
   editable.addEventListener("keydown", (e) => {
     if (e.key === "Tab") {
       e.preventDefault();
@@ -444,6 +446,11 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
         e.preventDefault();
         acceptGhost();
       }
+    } else if (e.key === "Enter" && getLine().startsWith("/")) {
+      // A slash command sends on Enter — the same startsWith("/") the dispatcher gates a command on,
+      // so Enter sends exactly what would be run as a command and nothing that would be read as content.
+      e.preventDefault();
+      commit();
     } else if (e.ctrlKey && (e.key === "c" || e.key === "C")) {
       // Ctrl-C with a selection is a copy — leave it be; with none, it abandons the line.
       if (window.getSelection()?.isCollapsed !== false) {
