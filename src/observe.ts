@@ -40,12 +40,15 @@ interface MachineUtterance {
 }
 
 // The echoes lens's answer: the clusters of near-duplicates, strongest first, each with its similarity score,
-// the lines that echoed nothing left as singles, and whether scoring ran at all —
-// scored is false when the embedder was unreachable and the kernel fell back to the plain mirror.
+// the lines that echoed nothing left as singles,
+// whether scoring ran at all (scored is false when the embedder was unreachable and the kernel fell back to the plain mirror),
+// and held_back — how many deep follow-ups the echo guard suppressed as near-duplicates before sending, all-time:
+// the clusters are the redundancy that got through, this is the redundancy that was stopped.
 interface MachineEchoesData {
   scored: boolean;
   clusters: Array<{ similarity: number; members: MachineUtterance[] }>;
   singles: MachineUtterance[];
+  held_back: number;
 }
 
 // GET /observe/echoes, returning the scored echoes, or null when the kernel wasn't reached
@@ -85,6 +88,13 @@ function renderMachineEchoes(io: AuthIo, data: MachineEchoesData): void {
   if (total === 0) {
     io.print(dim("I haven't said anything yet — nothing to observe."));
     return;
+  }
+
+  // The guard's tally: deep follow-ups I composed but held back as near-duplicates before ever sending them.
+  // Shown first, above the lens, because it is the redundancy that never reached you — the count the guard stopped.
+  if (data.held_back > 0) {
+    io.print(dim(`guard · held back ${data.held_back} deep repeat${data.held_back === 1 ? "" : "s"} before sending`));
+    io.print("");
   }
 
   if (!data.scored) {
