@@ -43,6 +43,7 @@ export const KERNEL_MSG = {
   notifications: "notifications", // GET/POST /notifications — per-channel enable/disable state in data.channels
   // observe
   observeMachineEchoes: "observe echoes", // GET /observe/echoes — scored redundancy in data (clusters, singles, scored)
+  observeReminders: "observe reminders", // GET /observe/reminders — recent reminders and their triggering lines in data
   // models
   models: "models", // GET /models and a successful POST — catalog, roles, assignable_roles in data
   modelRefused: "that model change didn't take", // POST /models — refused; data.reason says why, state alongside

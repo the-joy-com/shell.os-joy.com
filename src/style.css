@@ -28,8 +28,9 @@ body {
   bottom: var(--footer-band);
   padding: 12px;
   box-sizing: border-box;
-  /* The terminal itself is the scroll region: content flows top-down — banner,
-     then the prompt right beneath it — and only scrolls once it fills the box.
+  /* The terminal itself is the scroll region:
+     content flows top-down — banner, then the prompt right beneath it —
+     and only scrolls once it fills the box.
      Real text throughout, so it selects, copies, and scrolls by touch on its own,
      which is the whole reason xterm is gone. */
   overflow-y: auto;
@@ -73,10 +74,13 @@ body {
 }
 
 /* Your own submitted lines, echoed back into the log, read dimmer than The Joy's replies.
-   What you typed recedes so the answers coming back — the thing you actually re-read — stand out at full brightness,
-   with no second colour and no chat chrome: just the terminal's own dim register (the 0.5 of SGR `\x1b[2m`),
+   What you typed recedes so the answers coming back — the thing you actually re-read —
+   stand out at full brightness,
+   with no second colour and no chat chrome:
+   just the terminal's own dim register (the 0.5 of SGR `\x1b[2m`),
    set against Joy's lines, which are left bare at the base brightness.
-   Opacity only, never the text itself, so the log still selects and pastes as clean plain text —
+   Opacity only, never the text itself,
+   so the log still selects and pastes as clean plain text —
    the mirrored `joy ❯` / `❮ joy` sigils carry who-said-what into the copy. */
 .term-log .line.you {
   opacity: 0.5;
@@ -85,6 +89,26 @@ body {
 /* …except the one line marked as the landmark: a deliberate click brings it back to full,
    so the "you were here" highlight reads clearly instead of being halved along with the dim. */
 .term-log .line.you.here {
+  opacity: 1;
+}
+
+/* The reply control that rides the anchored message (see term.ts):
+   a quiet `↩ reply` at the line's end, in the terminal's green,
+   dim at rest and full-strength on hover or press.
+   It shows only on the one tapped message,
+   so it stays off every other line — the minimal affordance the terminal asks for.
+   user-select:none keeps it out of a copied selection,
+   so the log still yields clean plain text. */
+.term-log .term-reply {
+  margin-left: 1ch;
+  color: #6ee7a8;
+  opacity: 0.5;
+  cursor: pointer;
+  user-select: none;
+}
+
+.term-log .term-reply:hover,
+.term-log .term-reply:active {
   opacity: 1;
 }
 
@@ -97,7 +121,8 @@ body {
 
 /* The input line, flowing right after the log: prompt, then the editable, then the dim ghost.
    It's the positioning context for the send control that rides its right edge,
-   and the right padding holds a lane open for that control so a long line wraps before it rather than running underneath. */
+   and the right padding holds a lane open for that control
+   so a long line wraps before it rather than running underneath. */
 .term-input {
   position: relative;
   padding-right: 5em;
@@ -106,8 +131,12 @@ body {
 }
 
 /* The send control: submission moved here so Enter is free to insert line breaks.
-   Quiet furniture in the terminal's own vocabulary — the brackets echo the checklist's [ save ] — dim at rest and full-strength on hover or press, so it reads as pressable without shouting.
-   It's pinned to the bottom-right of the input line and carries the background, so it stays legible over any text that reaches the lane the input's padding holds open. */
+   Quiet furniture in the terminal's own vocabulary —
+   the brackets echo the checklist's [ save ] —
+   dim at rest and full-strength on hover or press,
+   so it reads as pressable without shouting.
+   It's pinned to the bottom-right of the input line and carries the background,
+   so it stays legible over any text that reaches the lane the input's padding holds open. */
 .term-send {
   position: absolute;
   right: 0;
@@ -132,8 +161,10 @@ body {
   opacity: 1;
 }
 
-/* A real contenteditable — the soft keyboard sees genuine text here, so
-   backspace and the caret behave like any web input, the fix at the heart of the rewrite. */
+/* A real contenteditable —
+   the soft keyboard sees genuine text here,
+   so backspace and the caret behave like any web input,
+   the fix at the heart of the rewrite. */
 .term-input .editable {
   outline: none;
   caret-color: #6ee7a8;
@@ -190,7 +221,8 @@ body {
 }
 
 /* Connectivity status, pinned to the bottom-left corner over the terminal.
-   Mirrors the version tag on the opposite side: same fixed layer, same read-only furniture treatment (clicks fall through).
+   Mirrors the version tag on the opposite side:
+   same fixed layer, same read-only furniture treatment (clicks fall through).
    A coloured dot (the ::before) plus its word —
    main.ts sets the label text and toggles the .online / .offline class;
    the colours live here so the wiring stays a single class swap. */
@@ -238,7 +270,8 @@ body {
 
 /* Source repos, pinned bottom-center over the terminal —
    The Joy's three GitHub repos, between the version tag and the connectivity dot.
-   Same fixed layer and dim treatment as those, with one difference: this is the footer's only real target.
+   Same fixed layer and dim treatment as those,
+   with one difference: this is the footer's only real target.
    The block keeps clicks falling through to the terminal (pointer-events: none),
    and each link re-enables itself, so only the words are clickable. */
 #source {

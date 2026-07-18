@@ -50,7 +50,8 @@ export function looksLikeEmail(address: string): boolean {
   return EMAIL_SHAPE.test(address.trim());
 }
 
-// Both /clear and the bare `reset` keyword wipe the screen.
+// The bare `clear` and `reset` keywords both wipe the screen —
+// `clear` is the one a terminal hand reaches for out of habit, so it works with no slash too.
 const clearScreen: Command["run"] = (term) => term.clear();
 
 export const COMMANDS: Command[] = [
@@ -79,7 +80,7 @@ export const COMMANDS: Command[] = [
       writeLine(term, `  ${"Enter".padEnd(11)} line break in a thought; send a command`);
     },
   },
-  { name: "clear", summary: "wipe the screen", run: clearScreen },
+  { name: "clear", summary: "wipe the screen (no slash)", bare: true, run: clearScreen },
   { name: "reset", summary: "clear the screen (no slash)", bare: true, run: clearScreen },
   // Identity verbs carry no run —
   // they're modal, dispatched to the auth flow by main.ts.

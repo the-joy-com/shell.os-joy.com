@@ -141,8 +141,8 @@ export function createCapture(term: Term, hooks: { kernelUrl: string }): Capture
   // Print a notice as a new line above the input.
   // For deliveries whose marker no longer exists — most often lines that were queued,
   // the app closed, and the worker delivered them after a reopen onto a fresh log.
-  function printFresh(text: string): void {
-    term.writeLine(text);
+  function printFresh(text: string): HTMLElement {
+    return term.writeLine(text);
   }
 
   function applyVerdict(data: unknown): void {
@@ -180,7 +180,12 @@ export function createCapture(term: Term, hooks: { kernelUrl: string }): Capture
   // so both surface a message the same way and neither shows it twice.
   async function surface(id: number, status: string, answer: string): Promise<void> {
     const line = answerLine(status, answer);
-    if (line) printFresh(line);
+    if (line) {
+      const node = printFresh(line);
+      // A real answer is replyable — quoting its body, not the `❮ joy` sigil.
+      // An abandoned notice is a system line, not a message to reply to, so it's left plain.
+      if (status === "answer") term.markMessage(node, answer);
+    }
     // Forget it once shown, or if the kernel disowns the id (unknown) — either way it will never need surfacing again.
     // A still-pending message returns no line and is left be.
     if (line || status === "unknown") await forget(id);
@@ -298,7 +303,7 @@ export function createCapture(term: Term, hooks: { kernelUrl: string }): Capture
       if (messages.length === 0) return;
       for (const m of messages) {
         const line = answerLine("answer", m.body);
-        if (line) printFresh(line);
+        if (line) term.markMessage(printFresh(line), m.body);
       }
       // Acknowledge only once they're shown. An ack that never lands just surfaces them
       // again next time — the safe direction (at-least-once), never a message dropped silently.

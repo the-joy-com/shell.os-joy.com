@@ -9,7 +9,9 @@
 // canvas has no text to select or copy,
 // and the hidden textarea reads empty to a soft keyboard, so backspace was swallowed and touch-scroll fought back.
 // All three go away here,
-// because the log is real selectable text, the scroll is the browser's own, and the input is a genuine editable element the keyboard can see.
+// because the log is real selectable text,
+// the scroll is the browser's own,
+// and the input is a genuine editable element the keyboard can see.
 //
 // The division of labour:
 // this module owns the surface (the scrolling log and the input line) and the raw key handling;
@@ -75,17 +77,24 @@ export interface Term {
   // Append one line to the log and hand back its node —
   // the node is what the capture loop keeps so it can repaint a marker in place later (see restyle).
   writeLine(text?: string): HTMLElement;
+  // Tag a log line as a replyable message, stashing the text to quote when replying to it.
+  // A message so tagged offers a `↩ reply` control once it's the tapped landmark (see setAnchor);
+  // the shell marks Joy's answers and the symbiot's own sent thoughts, and nothing else.
+  markMessage(node: HTMLElement, quote: string): void;
   // Fires on Ctrl-C on a normal line.
   onInterrupt(fn: () => void): void;
   // Fires when a normal line is sent (not during a modal readLine).
   onLine(fn: (line: string) => void): void;
-  // Modal card picker: draw a column of bordered cards in the log, each loading its own summary
-  // behind an in-card spinner, and let the symbiot move between them with ↑/↓ and open one with Enter (or a tap),
+  // Modal card picker: draw a column of bordered cards in the log,
+  // each loading its own summary behind an in-card spinner,
+  // and let the symbiot move between them with ↑/↓ and open one with Enter (or a tap),
   // resolving with the chosen card's key, or null if abandoned (Esc / Ctrl-C).
   // Each card's `load` runs the moment the picker opens, independently —
-  // a slow or failed card never holds the others: its resolved text fills that card in place,
+  // a slow or failed card never holds the others:
+  // its resolved text fills that card in place,
   // a rejection leaves a quiet error line in it alone.
-  // Like readLine and checklist it owns the keyboard for its duration; the input line steps aside and returns after.
+  // Like readLine and checklist it owns the keyboard for its duration;
+  // the input line steps aside and returns after.
   // /observe leans on this for its hub of observability lenses.
   cards(opts: {
     title?: string;
@@ -95,8 +104,10 @@ export interface Term {
   // and let the symbiot move the cursor with ↑/↓, tick or untick the row under it with space,
   // and settle with Enter — resolving with the final checked-state keyed the way it came in,
   // or null if abandoned (Esc / Ctrl-C).
-  // Rows and a save/cancel pair are tappable too, so a touch device with no space bar still works.
-  // Like readLine it owns the keyboard for its duration; the input line steps aside and returns after.
+  // Rows and a save/cancel pair are tappable too,
+  // so a touch device with no space bar still works.
+  // Like readLine it owns the keyboard for its duration;
+  // the input line steps aside and returns after.
   // /notifications leans on this to pick which channels The Joy may reach on.
   checklist(opts: {
     title?: string;
@@ -111,7 +122,8 @@ export interface Term {
   // Owned by the app: it knows the verbs.
   setGhost(fn: (line: string) => string): void;
   // Whether the current line sends on Enter rather than taking a line break —
-  // true for a command (a slash verb, a bare keyword), false for prose that submits via the send control.
+  // true for a command (a slash verb, a bare keyword),
+  // false for prose that submits via the send control.
   // Owned by the app for the same reason as the ghost: only it knows what a command is.
   setSendsOnEnter(fn: (line: string) => boolean): void;
   // Put focus back on the input (used after a modal flow settles).
@@ -160,17 +172,19 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   let onLineCb: ((line: string) => void) | null = null;
   let onInterruptCb: (() => void) | null = null;
   let ghostFor: (line: string) => string = () => "";
-  // Default until the app wires its own: the slash convention alone, so a terminal used bare still sends commands.
+  // Default until the app wires its own:
+  // the slash convention alone, so a terminal used bare still sends commands.
   let sendsOnEnter: (line: string) => boolean = (line) => line.startsWith("/");
-  // The last message the symbiot clicked — its "you were here" landmark in the wall of text.
+  // The last message the symbiot clicked — its "you were here" landmark in the wall of text,
+  // and the line the `↩ reply` control rides while it's the one anchored (see setAnchor).
   // At most one at a time; clicking another moves it. Cleared when the log is wiped.
   let anchored: HTMLElement | null = null;
 
   // --- rendering -----------------------------------------------------------
 
   function scrollToBottom(): void {
-    // The container is the scroll region — keep the newest line (and the input
-    // that trails it) in view as content grows past the box.
+    // The container is the scroll region —
+    // keep the newest line (and the input that trails it) in view as content grows past the box.
     container.scrollTop = container.scrollHeight;
   }
 
@@ -193,13 +207,66 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     anchored = null; // the landmark's node is gone with the log — forget it, don't dangle
   }
 
+  // The reply control that rides the anchored message:
+  // a quiet `↩ reply` at the line's end,
+  // shown only while a message is the tapped landmark — so it costs nothing on every other line.
+  // Clicking it seeds the input with the message quoted and a clear rule beneath, caret below,
+  // for the symbiot to type the reply and send the whole block as one message (see seedReply).
+  // One element, moved between lines as the landmark moves (see setAnchor), never one per line.
+  const replyBtn = document.createElement("span");
+  replyBtn.className = "term-reply";
+  replyBtn.textContent = "↩ reply";
+  replyBtn.setAttribute("role", "button");
+  replyBtn.setAttribute("aria-label", "reply");
+  replyBtn.title = "reply — quote this message";
+  // mousedown swallowed so a tap never blurs the editable first (keeps a phone's keyboard up);
+  // the click seeds the reply and stops there, so the container's tap-to-anchor doesn't re-fire.
+  replyBtn.addEventListener("mousedown", (e) => e.preventDefault());
+  replyBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    seedReply(anchored?.dataset.msg ?? "");
+  });
+
+  // Tag a log line as a replyable message, stashing the body to quote — the sigil-free text,
+  // so a reply quotes what was said, not the `❮ joy` / `joy ❯` furniture around it.
+  // If the line is already the landmark, reveal its reply control at once.
+  function markMessage(node: HTMLElement, quote: string): void {
+    node.classList.add("msg");
+    node.dataset.msg = quote;
+    if (anchored === node) node.appendChild(replyBtn);
+  }
+
+  // Seed the input with a reply to `quote`:
+  // each quoted line prefixed with `> `, a `---` rule,
+  // then the caret on an empty line below, where the reply is typed.
+  // The block is prose (it doesn't start with `/`),
+  // so Enter keeps making line breaks
+  // and the send control commits the whole thing — quote, rule, and reply —
+  // as one message to the kernel.
+  function seedReply(quote: string): void {
+    const quoted = quote
+      .split("\n")
+      .map((l) => `> ${l}`)
+      .join("\n");
+    editable.textContent = `${quoted}\n---\n`;
+    setCaretEnd();
+    updateGhost();
+    editable.focus();
+  }
+
   // Mark a log line as the last-clicked landmark, moving the highlight off whatever held it.
   // A no-op if that same line already holds it, so a second tap doesn't flicker.
+  // The reply control travels with the landmark:
+  // it comes off the line losing it,
+  // and lands on the new one only if that's a message —
+  // plain furniture (a marker, a help line) carries none.
   function setAnchor(node: HTMLElement): void {
     if (anchored === node) return;
     anchored?.classList.remove("here");
+    replyBtn.remove();
     node.classList.add("here");
     anchored = node;
+    if (node.classList.contains("msg")) node.appendChild(replyBtn);
   }
 
   function setPrompt(raw: string): void {
@@ -213,21 +280,25 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   // (the default, or a modal "email: "),
   // so what was typed stays on screen above its answer —
   // the same record xterm kept by echoing inline as you typed.
-  function echo(line: string, suffix = ""): void {
+  function echo(line: string, suffix = ""): HTMLElement {
     const node = document.createElement("div");
-    // `you` marks the line as the symbiot's own, so it reads dimmer than The Joy's replies (see style.css):
-    // what you typed recedes, the answer coming back stands out. Joy's lines go through writeLine and stay bare.
+    // `you` marks the line as the symbiot's own,
+    // so it reads dimmer than The Joy's replies (see style.css):
+    // what you typed recedes, the answer coming back stands out.
+    // Joy's lines go through writeLine and stay bare.
     node.className = "line you";
     appendStyled(node, currentPrompt);
     node.appendChild(document.createTextNode(line + suffix));
     log.appendChild(node);
     scrollToBottom();
+    return node;
   }
 
   // --- input ---------------------------------------------------------------
 
   // Newlines are content now (Enter inserts them), so they survive to the sent line;
-  // only a trailing run is shed at commit, so a stray Enter before send doesn't tack on a blank row.
+  // only a trailing run is shed at commit,
+  // so a stray Enter before send doesn't tack on a blank row.
   const getLine = (): string => editable.textContent ?? "";
 
   function setCaretEnd(): void {
@@ -269,7 +340,7 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
 
   function commit(): void {
     const line = getLine().replace(/^\n+|\n+$/g, "");
-    echo(line);
+    const node = echo(line);
     editable.textContent = "";
     updateGhost();
     if (pending) {
@@ -278,6 +349,12 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
       setPrompt(defaultPrompt); // the modal read is over — hand the normal prompt back
       resolve(line);
     } else {
+      // A sent thought is a message the symbiot can later reply to;
+      // a command (a slash verb or a bare keyword) and a blank line are not,
+      // so only prose is marked.
+      // sendsOnEnter is the app's own command test,
+      // so this leans on it rather than re-deciding what counts as a command.
+      if (line !== "" && !sendsOnEnter(line)) markMessage(node, line);
       onLineCb?.(line);
     }
   }
@@ -298,7 +375,8 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
 
   // A modal checklist: the read-a-line sibling for the times the answer is a set of on/off choices,
   // rather than typed text (today, which channels /notifications may reach on).
-  // It renders the choices as lines in the log — a cursor, a [x]/[ ] box, the label, the on/off word —
+  // It renders the choices as lines in the log —
+  // a cursor, a [x]/[ ] box, the label, the on/off word —
   // and takes the keyboard for its duration the way readLine does,
   // then hands the input line back and resolves.
   //
@@ -411,7 +489,8 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
           cursor = (cursor - 1 + total) % total;
           repaint();
         } else if (e.key === "ArrowRight" || e.key === "l") {
-          // save and cancel sit side by side, so ←/→ step between them when the cursor is on that row.
+          // save and cancel sit side by side,
+          // so ←/→ step between them when the cursor is on that row.
           if (cursor === saveRow) {
             cursor = cancelRow;
             repaint();
@@ -455,11 +534,15 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   }
 
   // A modal card picker: the checklist's sibling for the times the answer is "which one", not "which subset".
-  // It draws each choice as a bordered card — a title on the top rule, a description, and a summary line —
-  // and runs each card's `load` the moment it opens, independently, so a slow or failed card never holds the rest:
-  // the summary line spins until that card's own load settles, then fills with its text in place
-  // (or a quiet error line, in that card alone). It owns the keyboard the way readLine and checklist do —
-  // ↑/↓ move the focus, Enter opens the focused card, Esc / Ctrl-C abandons — and a tap opens a card directly.
+  // It draws each choice as a bordered card —
+  // a title on the top rule, a description, and a summary line —
+  // and runs each card's `load` the moment it opens, independently,
+  // so a slow or failed card never holds the rest:
+  // the summary line spins until that card's own load settles,
+  // then fills with its text in place (or a quiet error line, in that card alone).
+  // It owns the keyboard the way readLine and checklist do —
+  // ↑/↓ move the focus, Enter opens the focused card, Esc / Ctrl-C abandons —
+  // and a tap opens a card directly.
   // The block is left frozen in the log as a record of what was on offer.
   function cards(opts: {
     title?: string;
@@ -469,7 +552,8 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     let cursor = 0;
     let done = false;
 
-    // The input line steps aside and drops focus, so a keystroke can't leak into it while the picker owns the keyboard.
+    // The input line steps aside and drops focus,
+    // so a keystroke can't leak into it while the picker owns the keyboard.
     inputLine.style.display = "none";
     editable.blur();
 
@@ -477,7 +561,8 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
 
     const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     // One inner width for every card, so the column reads as a set:
-    // wide enough for the widest title or description, and never narrower than a comfortable minimum.
+    // wide enough for the widest title or description,
+    // and never narrower than a comfortable minimum.
     const contentW = Math.max(28, ...items.map((it) => it.title.length), ...items.map((it) => it.description.length));
     const W = contentW + 2; // the border run between the corners — one padding space each side of the content
     const dashes = "─".repeat(W);
@@ -496,8 +581,10 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
         bottom: writeLine(),
       }));
 
-      // A focused card wears the bright border; the rest rest dim. The description is always dim;
-      // the summary is dim while loading (so the spinner reads as pending) and plain once its text has landed.
+      // A focused card wears the bright border; the rest rest dim.
+      // The description is always dim;
+      // the summary is dim while loading (so the spinner reads as pending)
+      // and plain once its text has landed.
       const paintCard = (i: number): void => {
         const it = items[i];
         const b = i === cursor ? "\x1b[92m" : "\x1b[2m";
@@ -522,8 +609,9 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
         }
       }, 90);
 
-      // Each card's own load, kicked off at once and settled independently — one card's failure or slowness
-      // fills only its own summary, never blocking the others or the hub.
+      // Each card's own load, kicked off at once and settled independently —
+      // one card's failure or slowness fills only its own summary,
+      // never blocking the others or the hub.
       items.forEach((it, i) => {
         void it.load().then(
           (text) => {
@@ -589,12 +677,19 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     });
   }
 
-  // Enter no longer sends *content*: it inserts a line break, so a multi-line thought can be shaped as it reads.
-  // The one exception is a slash command — a single-line instruction to the shell, never prose —
-  // which Enter still sends, so a command needn't reach for the send control the way a thought does.
-  // The editable is plaintext-only, so for ordinary content the browser inserts the newline on its own —
-  // Enter is left unhandled below, and a desktop keydown and a soft keyboard's beforeinput both fall through to that default.
-  // Tab and ArrowRight still accept the ghost, Ctrl-C still abandons the line, and content submission moved to the send control below.
+  // Enter no longer sends *content*:
+  // it inserts a line break, so a multi-line thought can be shaped as it reads.
+  // The one exception is a slash command —
+  // a single-line instruction to the shell, never prose —
+  // which Enter still sends,
+  // so a command needn't reach for the send control the way a thought does.
+  // The editable is plaintext-only,
+  // so for ordinary content the browser inserts the newline on its own —
+  // Enter is left unhandled below,
+  // and a desktop keydown and a soft keyboard's beforeinput both fall through to that default.
+  // Tab and ArrowRight still accept the ghost,
+  // Ctrl-C still abandons the line,
+  // and content submission moved to the send control below.
   editable.addEventListener("keydown", (e) => {
     if (e.key === "Tab") {
       e.preventDefault();
@@ -605,7 +700,8 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
         acceptGhost();
       }
     } else if (e.key === "Enter" && e.shiftKey) {
-      // Shift-Enter always sends, command or thought alike — the keyboard shortcut for the send control,
+      // Shift-Enter always sends, command or thought alike —
+      // the keyboard shortcut for the send control,
       // so a thought can leave without a reach for the mouse while plain Enter keeps making line breaks.
       e.preventDefault();
       commit();
@@ -626,7 +722,8 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   editable.addEventListener("input", updateGhost);
 
   // Submission lives on the send control now that Enter makes line breaks.
-  // mousedown is swallowed so a tap never blurs the editable first, which keeps a phone's keyboard up across the send;
+  // mousedown is swallowed so a tap never blurs the editable first,
+  // which keeps a phone's keyboard up across the send;
   // the click commits the line and hands focus back for the next one.
   sendBtn.addEventListener("mousedown", (e) => e.preventDefault());
   sendBtn.addEventListener("click", (e) => {
@@ -642,8 +739,10 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   //
   // A tap that lands on a message line also anchors it as the landmark (see setAnchor):
   // the two compose, so the same tap both opens the keyboard and marks where you were.
-  // A drag-select bails at the guard above, so highlighting text to copy never moves the landmark;
-  // a blank furniture row (a spacer, a bare marker) carries no text, so it can't become one either.
+  // A drag-select bails at the guard above,
+  // so highlighting text to copy never moves the landmark;
+  // a blank furniture row (a spacer, a bare marker) carries no text,
+  // so it can't become one either.
   container.addEventListener("click", (e) => {
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
@@ -661,6 +760,7 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     clear,
     restyle,
     writeLine,
+    markMessage,
     onInterrupt: (fn) => (onInterruptCb = fn),
     onLine: (fn) => (onLineCb = fn),
     cards,
