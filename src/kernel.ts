@@ -41,6 +41,8 @@ export const KERNEL_MSG = {
   notAuthed: "not authenticated", // GET /status — no live session
   // notifications
   notifications: "notifications", // GET/POST /notifications — per-channel enable/disable state in data.channels
+  // observe
+  observeMachineEchoes: "observe echoes", // GET /observe/echoes — scored redundancy in data (clusters, singles, scored)
   // models
   models: "models", // GET /models and a successful POST — catalog, roles, assignable_roles in data
   modelRefused: "that model change didn't take", // POST /models — refused; data.reason says why, state alongside

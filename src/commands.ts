@@ -71,6 +71,12 @@ export const COMMANDS: Command[] = [
         const label = cmd.bare ? cmd.name : `/${cmd.name}`;
         writeLine(term, `  ${label.padEnd(8)} ${cmd.summary}`);
       }
+      // The keys someone reaches for, not the verbs they type —
+      // chiefly how to send a thought without reaching for the mouse.
+      writeLine(term);
+      writeLine(term, "keys:");
+      writeLine(term, `  ${"Shift+Enter".padEnd(11)} send the line`);
+      writeLine(term, `  ${"Enter".padEnd(11)} line break in a thought; send a command`);
     },
   },
   { name: "clear", summary: "wipe the screen", run: clearScreen },
@@ -95,6 +101,11 @@ export const COMMANDS: Command[] = [
   // but still authed: only the operator, logged in, should see or shape it —
   // so, like /timezone, authed-only.
   { name: "models", summary: "choose which models The Joy runs, and which does which job", authedOnly: true },
+  // Modal and authed-only —
+  // dispatched to its flow by main.ts, and hidden from a visitor (see isVisible).
+  // A hub of read-only observability lenses onto the running machine (today: echoes, where it repeated itself),
+  // reporting a symbiot's own output — so, like /timezone, authed-only.
+  { name: "observe", summary: "look at what The Joy's been doing (today: where it repeated itself)", authedOnly: true },
   { name: "status", summary: "show connection + session state" },
   // Modal and authed-only —
   // dispatched to its flow by main.ts, and hidden from a visitor (see isVisible).

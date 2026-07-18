@@ -15,6 +15,7 @@ import { type Envelope, isOk, KERNEL_MSG } from "./kernel";
 import { ensurePushOnLogin, runNotify } from "./notify";
 import { runNotifications } from "./notifications";
 import { runModels } from "./models";
+import { runObserve } from "./observe";
 import { registerServiceWorker } from "./pwa";
 import { createTerminal } from "./term";
 import { runTimezone } from "./zone";
@@ -157,6 +158,7 @@ const io: AuthIo = {
   readLine: (prompt) => term.readLine(prompt),
   print: (text) => writeLine(term, text),
   checklist: (opts) => term.checklist(opts),
+  cards: (opts) => term.cards(opts),
 };
 
 function handle(raw: string): void {
@@ -235,6 +237,14 @@ function handle(raw: string): void {
   // box-level config, operator-gated.
   if (verb === "models") {
     void runModels(KERNEL_URL, io).finally(() => term.focus());
+    return;
+  }
+
+  // /observe is the same shape:
+  // open the hub of lenses, each card loading its own data, and draw the chosen lens below.
+  // Modal and authed-only, like /timezone — a read-only look at the machine's own recent output.
+  if (verb === "observe") {
+    void runObserve(KERNEL_URL, io).finally(() => term.focus());
     return;
   }
 

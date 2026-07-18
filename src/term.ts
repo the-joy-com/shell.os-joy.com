@@ -67,22 +67,30 @@ function appendStyled(parent: HTMLElement, text: string): void {
 }
 
 export interface Term {
-  // Append one line to the log and hand back its node —
-  // the node is what the capture loop keeps so it can repaint a marker in place later (see restyle).
-  writeLine(text?: string): HTMLElement;
+  // Wipe the log (both /clear and the bare `reset`).
+  clear(): void;
   // Re-render a line's content in place —
   // the DOM-native replacement for the cursor arithmetic the marker repaint used to need.
   restyle(node: HTMLElement, text: string): void;
-  // Wipe the log (both /clear and the bare `reset`).
-  clear(): void;
-  // Fires when a normal line is sent (not during a modal readLine).
-  onLine(fn: (line: string) => void): void;
+  // Append one line to the log and hand back its node —
+  // the node is what the capture loop keeps so it can repaint a marker in place later (see restyle).
+  writeLine(text?: string): HTMLElement;
   // Fires on Ctrl-C on a normal line.
   onInterrupt(fn: () => void): void;
-  // Modal read: show `prompt` on the input line and resolve with the next line entered,
-  // or null if it's abandoned with Ctrl-C.
-  // The identity flows lean on this to read the email and then the code.
-  readLine(prompt: string): Promise<string | null>;
+  // Fires when a normal line is sent (not during a modal readLine).
+  onLine(fn: (line: string) => void): void;
+  // Modal card picker: draw a column of bordered cards in the log, each loading its own summary
+  // behind an in-card spinner, and let the symbiot move between them with ↑/↓ and open one with Enter (or a tap),
+  // resolving with the chosen card's key, or null if abandoned (Esc / Ctrl-C).
+  // Each card's `load` runs the moment the picker opens, independently —
+  // a slow or failed card never holds the others: its resolved text fills that card in place,
+  // a rejection leaves a quiet error line in it alone.
+  // Like readLine and checklist it owns the keyboard for its duration; the input line steps aside and returns after.
+  // /observe leans on this for its hub of observability lenses.
+  cards(opts: {
+    title?: string;
+    items: Array<{ key: string; title: string; description: string; load: () => Promise<string> }>;
+  }): Promise<string | null>;
   // Modal multi-select: draw an interactive checklist in the log,
   // and let the symbiot move the cursor with ↑/↓, tick or untick the row under it with space,
   // and settle with Enter — resolving with the final checked-state keyed the way it came in,
@@ -94,6 +102,10 @@ export interface Term {
     title?: string;
     items: Array<{ key: string; label: string; checked: boolean }>;
   }): Promise<Record<string, boolean> | null>;
+  // Modal read: show `prompt` on the input line and resolve with the next line entered,
+  // or null if it's abandoned with Ctrl-C.
+  // The identity flows lean on this to read the email and then the code.
+  readLine(prompt: string): Promise<string | null>;
   // The inline suggestion provider —
   // given the current line, return the tail to show dim to the right (empty for none).
   // Owned by the app: it knows the verbs.
@@ -132,6 +144,9 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   sendBtn.textContent = "send";
   sendBtn.setAttribute("role", "button");
   sendBtn.setAttribute("aria-label", "send");
+  // A native tooltip points at the keyboard path without adding chrome —
+  // the hover hint stays out of the terminal's own surface until asked for.
+  sendBtn.title = "send — or press Shift+Enter";
   sendBtn.hidden = true; // nothing to send on a blank line — the control appears once there's content
   inputLine.append(promptSpan, editable, ghostSpan, sendBtn);
 
@@ -439,6 +454,141 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     });
   }
 
+  // A modal card picker: the checklist's sibling for the times the answer is "which one", not "which subset".
+  // It draws each choice as a bordered card — a title on the top rule, a description, and a summary line —
+  // and runs each card's `load` the moment it opens, independently, so a slow or failed card never holds the rest:
+  // the summary line spins until that card's own load settles, then fills with its text in place
+  // (or a quiet error line, in that card alone). It owns the keyboard the way readLine and checklist do —
+  // ↑/↓ move the focus, Enter opens the focused card, Esc / Ctrl-C abandons — and a tap opens a card directly.
+  // The block is left frozen in the log as a record of what was on offer.
+  function cards(opts: {
+    title?: string;
+    items: Array<{ key: string; title: string; description: string; load: () => Promise<string> }>;
+  }): Promise<string | null> {
+    const { items } = opts;
+    let cursor = 0;
+    let done = false;
+
+    // The input line steps aside and drops focus, so a keystroke can't leak into it while the picker owns the keyboard.
+    inputLine.style.display = "none";
+    editable.blur();
+
+    if (opts.title) writeLine(`\x1b[2m${opts.title}\x1b[0m`);
+
+    const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    // One inner width for every card, so the column reads as a set:
+    // wide enough for the widest title or description, and never narrower than a comfortable minimum.
+    const contentW = Math.max(28, ...items.map((it) => it.title.length), ...items.map((it) => it.description.length));
+    const W = contentW + 2; // the border run between the corners — one padding space each side of the content
+    const dashes = "─".repeat(W);
+    const truncate = (s: string): string => (s.length <= contentW ? s : `${s.slice(0, contentW - 1)}…`);
+
+    // Per-card display state: the summary line's current text, and whether that card is still loading (for the spinner).
+    const summary = items.map(() => "loading…");
+    const loading = items.map(() => true);
+
+    return new Promise((resolve) => {
+      // Each card is four held log lines: the titled top rule, the description, the summary, the bottom rule.
+      const nodes = items.map(() => ({
+        top: writeLine(),
+        desc: writeLine(),
+        sum: writeLine(),
+        bottom: writeLine(),
+      }));
+
+      // A focused card wears the bright border; the rest rest dim. The description is always dim;
+      // the summary is dim while loading (so the spinner reads as pending) and plain once its text has landed.
+      const paintCard = (i: number): void => {
+        const it = items[i];
+        const b = i === cursor ? "\x1b[92m" : "\x1b[2m";
+        const titleFill = "─".repeat(Math.max(0, W - it.title.length - 2));
+        restyle(nodes[i].top, `${b}┌ ${it.title} ${titleFill}┐\x1b[0m`);
+        restyle(nodes[i].desc, `${b}│\x1b[0m \x1b[2m${truncate(it.description).padEnd(contentW)}\x1b[0m ${b}│\x1b[0m`);
+        const body = truncate(summary[i]).padEnd(contentW);
+        restyle(nodes[i].sum, `${b}│\x1b[0m ${loading[i] ? `\x1b[2m${body}\x1b[0m` : body} ${b}│\x1b[0m`);
+        restyle(nodes[i].bottom, `${b}└${dashes}┘\x1b[0m`);
+      };
+      const repaintAll = (): void => items.forEach((_, i) => paintCard(i));
+
+      // One ticker spins every card still loading; it's cleared the moment the picker settles.
+      let frame = 0;
+      const spin = window.setInterval(() => {
+        frame = (frame + 1) % SPINNER.length;
+        for (let i = 0; i < items.length; i++) {
+          if (loading[i]) {
+            summary[i] = `${SPINNER[frame]} loading…`;
+            paintCard(i);
+          }
+        }
+      }, 90);
+
+      // Each card's own load, kicked off at once and settled independently — one card's failure or slowness
+      // fills only its own summary, never blocking the others or the hub.
+      items.forEach((it, i) => {
+        void it.load().then(
+          (text) => {
+            loading[i] = false;
+            summary[i] = text;
+            paintCard(i);
+          },
+          () => {
+            loading[i] = false;
+            summary[i] = "— couldn't load —";
+            paintCard(i);
+          },
+        );
+      });
+
+      repaintAll();
+      writeLine("\x1b[2m↑/↓ move · enter opens · esc leaves\x1b[0m");
+
+      const settle = (result: string | null): void => {
+        if (done) return;
+        done = true;
+        window.removeEventListener("keydown", onKey, true);
+        window.clearInterval(spin);
+        cursor = -1; // clear the focus highlight so the frozen block reads as a plain record
+        repaintAll();
+        inputLine.style.display = "";
+        editable.focus();
+        resolve(result);
+      };
+
+      // Tapping any line of a card opens it — a touch device has no Enter within reach either.
+      nodes.forEach((card, i) => {
+        for (const node of [card.top, card.desc, card.sum, card.bottom]) {
+          node.classList.add("choice");
+          node.addEventListener("click", (e) => {
+            e.stopPropagation();
+            settle(items[i].key);
+          });
+        }
+      });
+
+      // Handled in the capture phase so the navigation keys never reach anything below,
+      // with the arrows prevented from scrolling the page under the terminal.
+      const onKey = (e: KeyboardEvent): void => {
+        if (e.key === "ArrowDown" || e.key === "j") {
+          cursor = (cursor + 1) % items.length;
+          repaintAll();
+        } else if (e.key === "ArrowUp" || e.key === "k") {
+          cursor = (cursor - 1 + items.length) % items.length;
+          repaintAll();
+        } else if (e.key === "Enter") {
+          settle(items[cursor].key);
+        } else if (e.key === "Escape" || (e.ctrlKey && (e.key === "c" || e.key === "C"))) {
+          settle(null);
+        } else {
+          return; // an unhandled key falls through untouched
+        }
+        e.preventDefault();
+        e.stopPropagation();
+      };
+
+      window.addEventListener("keydown", onKey, true);
+    });
+  }
+
   // Enter no longer sends *content*: it inserts a line break, so a multi-line thought can be shaped as it reads.
   // The one exception is a slash command — a single-line instruction to the shell, never prose —
   // which Enter still sends, so a command needn't reach for the send control the way a thought does.
@@ -454,6 +604,11 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
         e.preventDefault();
         acceptGhost();
       }
+    } else if (e.key === "Enter" && e.shiftKey) {
+      // Shift-Enter always sends, command or thought alike — the keyboard shortcut for the send control,
+      // so a thought can leave without a reach for the mouse while plain Enter keeps making line breaks.
+      e.preventDefault();
+      commit();
     } else if (e.key === "Enter" && sendsOnEnter(getLine())) {
       // A command sends on Enter, so it needn't reach for the send control the way a thought does.
       // What counts as a command is the app's to know (a slash verb, a bare keyword like `reset`) —
@@ -503,17 +658,18 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   editable.focus();
 
   return {
-    writeLine,
-    restyle,
     clear,
-    onLine: (fn) => (onLineCb = fn),
+    restyle,
+    writeLine,
     onInterrupt: (fn) => (onInterruptCb = fn),
+    onLine: (fn) => (onLineCb = fn),
+    cards,
+    checklist,
     readLine: (prompt) => {
       setPrompt(prompt);
       editable.focus();
       return new Promise((resolve) => (pending = resolve));
     },
-    checklist,
     setGhost: (fn) => (ghostFor = fn),
     setSendsOnEnter: (fn) => (sendsOnEnter = fn),
     focus: () => editable.focus(),

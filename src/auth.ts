@@ -32,6 +32,12 @@ export interface AuthIo {
     title?: string;
     items: Array<{ key: string; label: string; checked: boolean }>;
   }) => Promise<Record<string, boolean> | null>;
+  // cards runs a modal card picker (↑/↓ move, Enter opens), each card loading its own summary,
+  // and resolves with the chosen card's key, or null if abandoned — /observe uses it for its lens hub.
+  cards: (opts: {
+    title?: string;
+    items: Array<{ key: string; title: string; description: string; load: () => Promise<string> }>;
+  }) => Promise<string | null>;
 }
 
 // The data the identity routes carry back inside the envelope.
