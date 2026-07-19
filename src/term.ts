@@ -77,6 +77,13 @@ export interface Term {
   // Append one line to the log and hand back its node —
   // the node is what the capture loop keeps so it can repaint a marker in place later (see restyle).
   writeLine(text?: string): HTMLElement;
+  // Append a line that arrived on its own (a kernel answer, an unsolicited follow-up)
+  // rather than in reply to a keystroke.
+  // Same as writeLine, except it holds the view where it is when a message is pinned (the tapped landmark),
+  // so an incoming line never carries the pin off-screen;
+  // it scrolls as normal when nothing is pinned.
+  // The inbound render path leans on this (see capture.printFresh).
+  writeInbound(text?: string): HTMLElement;
   // Tag a log line as a replyable message, stashing the text to quote when replying to it.
   // A message so tagged offers a `↩ reply` control once it's the tapped landmark (see setAnchor);
   // the shell marks Joy's answers and the symbiot's own sent thoughts, and nothing else.
@@ -192,13 +199,32 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     container.scrollTop = container.scrollHeight;
   }
 
-  function writeLine(text = ""): HTMLElement {
+  // Append one line to the log. `scroll` says whether to chase the bottom afterwards:
+  // solicited output always does, so what the symbiot just asked for lands in view;
+  // a line arriving on its own defers to a pinned landmark (see writeInbound).
+  function append(text: string, scroll: boolean): HTMLElement {
     const node = document.createElement("div");
     node.className = "line";
     if (text) appendStyled(node, text);
     log.appendChild(node);
-    scrollToBottom();
+    if (scroll) scrollToBottom();
     return node;
+  }
+
+  function writeLine(text = ""): HTMLElement {
+    return append(text, true);
+  }
+
+  // Append a line that arrived on its own — a kernel answer, an unsolicited follow-up —
+  // not in reply to a keystroke.
+  // It chases the bottom like any other line, unless a message is pinned:
+  // the symbiot has tapped one to hold it in sight (to read it, to reply to it),
+  // so a line landing meanwhile must not yank the log to the bottom and carry that landmark off-screen.
+  // A fresh tap or /clear releases the pin and the chase resumes.
+  // Solicited output — echoes, command replies, the pickers — never comes through here,
+  // so it always scrolls.
+  function writeInbound(text = ""): HTMLElement {
+    return append(text, anchored === null);
   }
 
   function restyle(node: HTMLElement, text: string): void {
@@ -801,6 +827,7 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     clear,
     restyle,
     writeLine,
+    writeInbound,
     markMessage,
     onInterrupt: (fn) => (onInterruptCb = fn),
     onLine: (fn) => (onLineCb = fn),

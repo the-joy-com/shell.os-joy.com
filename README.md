@@ -25,6 +25,16 @@ yarn dev          # start the dev server with hot reload
 
 `yarn dev` prints a local URL (usually <http://localhost:5173>) — open it and you'll get the terminal. Type `/help` to see the commands.
 
+> **Before you try to `/login`, point the shell at the right kernel.** With no config the shell talks to the **production** kernel `https://kernel.os-joy.com` — fine for looking around, but you can only log in against a kernel where *your* address is a registered symbiot. If you're running your own kernel locally, you **must** tell the shell so, or `/login` silently goes nowhere: the kernel deliberately answers *"if that address is registered, a login code is on its way"* whether or not it knows you, so pointing at the wrong kernel doesn't look like an error — it looks like success, and then no code ever arrives.
+>
+> To point dev at your local kernel, create a **gitignored** `.env.local` next to `package.json` **before** starting `yarn dev` — copy the checked-in template, which already holds the local-kernel value:
+>
+> ```bash
+> cp .env.local.example .env.local
+> ```
+>
+> Vite reads env vars only at startup, so if `yarn dev` is already running, **restart it** — a hot reload won't pick this up. Then open the shell at `localhost:5173` or `127.0.0.1:5173` (both are in the kernel's CORS allow-list; any other host or port the browser will block, and the connection dot reads offline even with the kernel up). The [connectivity dot](#the-connectivity-dot) section below has the full picture.
+
 ## the commands
 
 Type `/help` to list them — it leads with the running version, then prints the verbs. A **visitor** (no session) sees only what they can use; the authed-only settings stay hidden until there's a login. The surface is defined in one place, `src/commands.ts`:
@@ -117,6 +127,8 @@ yarn build        # type-check, then emit the static site to dist/
 yarn preview      # serve an already-built dist/ to sanity-check the artifact
 yarn serve        # build, then serve dist/ in one step (build + preview)
 ```
+
+`yarn dev` and `yarn serve` are not two ways to do the same thing — they serve different artifacts. **`yarn dev`** is [Vite](https://vite.dev/)'s dev server: it serves the TypeScript in `src/` directly, transformed on the fly, with hot reload — fast to iterate on, but it never runs the production build, and in particular it does **not** emit the service worker. Since the worker is registered from `./sw.js` (see [the source](#the-source)) and that file only exists after a build, dev-mode registration simply fails and is swallowed with a warning. So everything the worker carries — PWA install, offline open, and the [capture loop](#the-capture-loop)'s durable outbox drain — is *absent* under `yarn dev`; the terminal itself works, but that whole layer is dark. **`yarn serve`** is the opposite: it runs the full `yarn build` (both type-checks and both Vite passes, including the un-hashed `dist/sw.js`), then `vite preview` serves the real `dist/` — byte-for-byte what deploys. Reach for `yarn dev` while shaping the UI; reach for `yarn serve` whenever the thing you're testing touches the service worker, offline behaviour, or anything that must match production exactly.
 
 The contents of `dist/` are what land on the server's document root.
 

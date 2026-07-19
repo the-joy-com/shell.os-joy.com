@@ -142,7 +142,10 @@ export function createCapture(term: Term, hooks: { kernelUrl: string }): Capture
   // For deliveries whose marker no longer exists — most often lines that were queued,
   // the app closed, and the worker delivered them after a reopen onto a fresh log.
   function printFresh(text: string): HTMLElement {
-    return term.writeLine(text);
+    // Inbound, so it defers to a pinned landmark:
+    // if the symbiot has a message tapped to hold it in sight,
+    // a line arriving on its own must not yank the log to the bottom and carry the pin off-screen.
+    return term.writeInbound(text);
   }
 
   function applyVerdict(data: unknown): void {

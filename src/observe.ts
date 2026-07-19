@@ -16,8 +16,8 @@
 // The session token rides on the request the way the other authed flows send it.
 //
 // Beyond the hub and its self-loading cards, each lens draws its own view:
-// echoes, a chronological mirror of my recent output
-// grouped into clusters where lines say more or less the same thing;
+// echoes, a mirror of my recent output, newest first,
+// its near-duplicates grouped into echo cards you open to see the repeating lines and when each was said;
 // and reminders, the reminders I've scheduled paired with the lines that triggered them,
 // so a reminder set when none was asked for is easy to spot.
 
@@ -136,12 +136,14 @@ function printMachineUtterance(io: AuthIo, u: MachineUtterance): void {
   io.print(`     ${u.text.replace(/\s*\n\s*/g, " ")}`);
 }
 
-// The clustered view: the near-duplicates grouped under an echo heading with their similarity, strongest first,
-// then everything that stood alone below.
+// The clustered view: each echo offered as an openable card, strongest first —
+// open one and its source lines are drawn out beneath it, newest first,
+// each carrying when it was said and the line it answered.
+// The lines that stood alone are listed plainly below, under "said once".
 // When scoring couldn't run (the embedder was down),
 // it says so and falls back to the plain list rather than pretending nothing repeated —
 // the mirror still works.
-function renderMachineEchoes(io: AuthIo, data: MachineEchoesData): void {
+async function renderMachineEchoes(io: AuthIo, data: MachineEchoesData): Promise<void> {
   const total = data.clusters.reduce((n, c) => n + c.members.length, 0) + data.singles.length;
   if (total === 0) {
     io.print(dim("I haven't said anything yet — nothing to observe."));
@@ -174,10 +176,29 @@ function renderMachineEchoes(io: AuthIo, data: MachineEchoesData): void {
   );
   io.print("");
 
-  for (const c of data.clusters) {
-    io.print(green(`  ═ echo · ${c.similarity.toFixed(2)} ${"═".repeat(22)}`));
-    for (const u of c.members) printMachineUtterance(io, u);
-    io.print("");
+  // Each echo is a card; opening one draws its source lines out below, newest first.
+  // The card's face is its strongest-pair score, a preview of its newest line, and how many lines clustered —
+  // and abandoning the picker (esc) simply leaves the source lines unopened and drops to the singles below.
+  if (repeats > 0) {
+    const preview = (text: string): string => {
+      const flat = text.replace(/\s*\n\s*/g, " ");
+      return flat.length > 44 ? `${flat.slice(0, 43)}…` : flat;
+    };
+    const chosen = await io.cards({
+      title: "echoes · open one to see its source lines",
+      items: data.clusters.map((c, i) => ({
+        key: String(i),
+        title: `echo · ${c.similarity.toFixed(2)}`,
+        description: `"${preview(c.members[0].text)}"`,
+        load: async () => `${c.members.length} lines`,
+      })),
+    });
+    if (chosen !== null) {
+      const c = data.clusters[Number(chosen)];
+      io.print(green(`  ═ echo · ${c.similarity.toFixed(2)} · ${c.members.length} lines ${"═".repeat(12)}`));
+      for (const u of c.members) printMachineUtterance(io, u);
+      io.print("");
+    }
   }
 
   if (data.singles.length > 0) {
@@ -237,7 +258,7 @@ export async function runObserve(kernelUrl: string, io: AuthIo): Promise<void> {
       {
         key: "echoes",
         title: "echoes",
-        description: "where I said more or less the same thing twice",
+        description: "when the agent symbiot repeated itself",
         load: async () => {
           echoes = fetchMachineEchoes(kernelUrl, token);
           const data = await echoes;
@@ -272,7 +293,7 @@ export async function runObserve(kernelUrl: string, io: AuthIo): Promise<void> {
       io.print(warn("couldn't read the echoes lens — if this keeps up, try /login again."));
       return;
     }
-    renderMachineEchoes(io, data);
+    await renderMachineEchoes(io, data);
   }
   if (chosen === "reminders") {
     const data = await reminders;
