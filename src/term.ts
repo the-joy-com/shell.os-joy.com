@@ -179,6 +179,10 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
   // and the line the `↩ reply` control rides while it's the one anchored (see setAnchor).
   // At most one at a time; clicking another moves it. Cleared when the log is wiped.
   let anchored: HTMLElement | null = null;
+  // Command history for arrow up/down navigation
+  const history: string[] = [];
+  let historyIndex = -1;
+  let tempInput = ""; // Store current input when navigating history
 
   // --- rendering -----------------------------------------------------------
 
@@ -343,6 +347,13 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
     const node = echo(line);
     editable.textContent = "";
     updateGhost();
+    // Reset history navigation state when committing
+    historyIndex = -1;
+    tempInput = "";
+    // Add non-empty input to history
+    if (line !== "") {
+      history.push(line);
+    }
     if (pending) {
       const resolve = pending;
       pending = null;
@@ -698,6 +709,36 @@ export function createTerminal(container: HTMLElement, opts: { prompt: string })
       if (caretAtEnd() && ghostFor(getLine())) {
         e.preventDefault();
         acceptGhost();
+      }
+    } else if (e.key === "ArrowUp") {
+      // Navigate up through command history
+      if (history.length > 0) {
+        e.preventDefault();
+        if (historyIndex === -1) {
+          // Save current input before navigating
+          tempInput = getLine();
+          historyIndex = history.length - 1;
+        } else if (historyIndex > 0) {
+          historyIndex--;
+        }
+        editable.textContent = history[historyIndex];
+        setCaretEnd();
+        updateGhost();
+      }
+    } else if (e.key === "ArrowDown") {
+      // Navigate down through command history
+      if (history.length > 0 && historyIndex !== -1) {
+        e.preventDefault();
+        if (historyIndex < history.length - 1) {
+          historyIndex++;
+          editable.textContent = history[historyIndex];
+        } else {
+          // Reached the end, restore the temp input
+          historyIndex = -1;
+          editable.textContent = tempInput;
+        }
+        setCaretEnd();
+        updateGhost();
       }
     } else if (e.key === "Enter" && e.shiftKey) {
       // Shift-Enter always sends, command or thought alike —
